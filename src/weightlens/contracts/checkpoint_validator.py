@@ -11,6 +11,6 @@ class CheckpointValidator(ABC):
     """Validate checkpoint integrity without batch loading."""
 
     @abstractmethod
-    def validate(self) -> "CheckpointHealth":
+    def validate(self) -> CheckpointHealth:
         """Return a CheckpointHealth summary for the checkpoint."""
         raise NotImplementedError
