@@ -1,3 +1,8 @@
-from .contracts import CheckpointValidator, WeightSource
+from .contracts import (
+    CheckpointValidator,
+    GlobalAggregator,
+    StatsEngine,
+    WeightSource,
+)
 
-__all__ = ["CheckpointValidator", "WeightSource"]
+__all__ = ["CheckpointValidator", "GlobalAggregator", "StatsEngine", "WeightSource"]
