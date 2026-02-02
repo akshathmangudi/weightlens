@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=80.10.2","wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "weightlens"
+version = "0.1.0"
+description = "Statistical model analysis for ML model weights." 
+readme = "README.md" 
+requires-python = ">=3.11" 
+license = { text = "MIT" } 
+
+authors = [
+    { name = "Akshath Mangudi" } 
+]
+
+dependencies = [
+    "numpy>=2.4.2",
+    "pydantic>=2.12.2",
+    "rich>=14.2.0",
+    "torch>=2.9.0"
+]
+
+keywords = [
+    "machine-learning",
+    "model-analysis",
+    "weights",
+    "pytorch"
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.scripts]
+lens = "weightlens.cli:main"
