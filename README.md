@@ -21,6 +21,9 @@ Weightlens is an analysis tool for checkpoint weights.
 ## To use
 Simply run `pip install weightlens` into your virtual environment and start by running `lens analyze <filename>.pth`
 
+## Status
+ALL TESTS AND LINT CHECKS PASS.
+
 ## Contributing
 1. **Step 0**: Clone this repo. 
 2. **Step 1**: Setup a virtual environment of your choice. The standard is uv as a `requirements.txt` does not exist here. 
