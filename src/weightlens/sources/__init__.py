@@ -1,3 +1,3 @@
-from .pytorch_weight_source import PyTorchWeightSource
+from .pytorch import PyTorchWeightSource
 
 __all__ = ["PyTorchWeightSource"]

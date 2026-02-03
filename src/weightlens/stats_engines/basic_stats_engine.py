@@ -4,6 +4,7 @@ import numpy as np
 
 from weightlens.contracts import StatsEngine
 from weightlens.models import LayerStats, LayerTensor
+from weightlens.p2_quantile import P2QuantileEstimator
 
 
 class BasicStatsEngine(StatsEngine):
@@ -25,6 +26,7 @@ class BasicStatsEngine(StatsEngine):
         l2_norm = float(np.sqrt(np.dot(values, values)))
         nonzero_count = int(np.count_nonzero(values))
         sparsity = 1.0 - (nonzero_count / param_count)
+        p99_abs = self._compute_p99_abs(values)
 
         return LayerStats(
             name=layer.name,
@@ -35,4 +37,12 @@ class BasicStatsEngine(StatsEngine):
             l2_norm=l2_norm,
             sparsity=sparsity,
             param_count=param_count,
+            p99_abs=p99_abs,
         )
+
+    @staticmethod
+    def _compute_p99_abs(values: np.ndarray) -> float:
+        estimator = P2QuantileEstimator(0.99)
+        for entry in values.flat:
+            estimator.update(abs(float(entry)))
+        return estimator.value()

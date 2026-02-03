@@ -31,6 +31,7 @@ def make_layer_stats() -> LayerStats:
         l2_norm=12.5,
         sparsity=0.0,
         param_count=128,
+        p99_abs=0.55,
     )
 
 
@@ -43,6 +44,9 @@ def make_global_stats() -> GlobalStats:
         p50=0.0,
         p95=0.3,
         p99=0.5,
+        median_layer_variance=0.04,
+        median_layer_norm=12.5,
+        iqr_layer_norm=1.2,
     )
 
 
@@ -106,6 +110,7 @@ def test_layer_stats_rejects_invalid_types() -> None:
             l2_norm=12.5,
             sparsity=0.0,
             param_count=128,
+            p99_abs=0.55,
         )
 
 
@@ -114,6 +119,8 @@ def test_global_stats_accepts_valid_payload() -> None:
 
     assert stats.p50 == 0.0
     assert stats.p99 == 0.5
+    assert stats.median_layer_variance == 0.04
+    assert stats.iqr_layer_norm == 1.2
 
 
 def test_global_stats_rejects_missing_fields() -> None:

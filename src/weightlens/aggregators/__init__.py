@@ -1,3 +1,4 @@
-from .streaming_global_aggregator import StreamingGlobalAggregator
+from .streaming_global import StreamingGlobalAggregator
+from .streaming_layer_metrics import StreamingLayerMetricsAggregator
 
-__all__ = ["StreamingGlobalAggregator"]
+__all__ = ["StreamingGlobalAggregator", "StreamingLayerMetricsAggregator"]

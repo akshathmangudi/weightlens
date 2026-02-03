@@ -5,9 +5,7 @@ from pathlib import Path
 
 import torch
 
-from weightlens.validators.pytorch_checkpoint_validator import (
-    PyTorchCheckpointValidator,
-)
+from weightlens.validators.pytorch_checkpoint import PyTorchCheckpointValidator
 
 
 def _save_checkpoint(tmp_path: Path) -> Path:

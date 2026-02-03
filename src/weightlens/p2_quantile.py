@@ -1,13 +1,8 @@
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, field
 
 import numpy as np
-from numpy.typing import NDArray
-
-from weightlens.contracts import GlobalAggregator
-from weightlens.models import GlobalStats
 
 
 def _float_list() -> list[float]:
@@ -19,7 +14,7 @@ def _int_list() -> list[int]:
 
 
 @dataclass
-class _P2QuantileEstimator:
+class P2QuantileEstimator:
     """P² quantile estimator with constant memory."""
 
     quantile: float
@@ -138,49 +133,3 @@ class _P2QuantileEstimator:
     def _exact_quantile(values: list[float], quantile: float) -> float:
         data = np.asarray(values, dtype=np.float64)
         return float(np.quantile(data, quantile, method="linear"))
-
-
-class StreamingGlobalAggregator(GlobalAggregator):
-    """Streaming global metrics via Welford + P² estimators."""
-
-    def __init__(self) -> None:
-        self._count = 0
-        self._mean = 0.0
-        self._m2 = 0.0
-        self._estimators = {
-            "p1": _P2QuantileEstimator(0.01),
-            "p5": _P2QuantileEstimator(0.05),
-            "p50": _P2QuantileEstimator(0.5),
-            "p95": _P2QuantileEstimator(0.95),
-            "p99": _P2QuantileEstimator(0.99),
-        }
-
-    def update(self, values: NDArray[np.number]) -> None:
-        for entry in values.flat:
-            value = float(entry)
-            if not math.isfinite(value):
-                raise ValueError("Non-finite value encountered in global aggregation.")
-            self._update_value(value)
-
-    def finalize(self) -> GlobalStats:
-        if self._count == 0:
-            raise ValueError("No values provided for global aggregation.")
-        variance = self._m2 / self._count
-        return GlobalStats(
-            mean=self._mean,
-            std=math.sqrt(variance),
-            p1=self._estimators["p1"].value(),
-            p5=self._estimators["p5"].value(),
-            p50=self._estimators["p50"].value(),
-            p95=self._estimators["p95"].value(),
-            p99=self._estimators["p99"].value(),
-        )
-
-    def _update_value(self, value: float) -> None:
-        self._count += 1
-        delta = value - self._mean
-        self._mean += delta / self._count
-        delta2 = value - self._mean
-        self._m2 += delta * delta2
-        for estimator in self._estimators.values():
-            estimator.update(value)

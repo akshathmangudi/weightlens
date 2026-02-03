@@ -50,6 +50,7 @@ class LayerStats(BaseModel):
     l2_norm: float
     sparsity: float
     param_count: int
+    p99_abs: float
 
 
 class GlobalStats(BaseModel):
@@ -64,6 +65,9 @@ class GlobalStats(BaseModel):
     p50: float
     p95: float
     p99: float
+    median_layer_variance: float
+    median_layer_norm: float
+    iqr_layer_norm: float
 
 
 class DiagnosticFlag(BaseModel):

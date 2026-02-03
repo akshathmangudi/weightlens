@@ -21,6 +21,7 @@ def test_basic_stats_engine_computes_expected_stats() -> None:
     engine = BasicStatsEngine()
 
     stats = engine.compute_layer(_make_layer(values, name="layer1"))
+    expected_p99_abs = float(np.quantile(np.abs(values), 0.99, method="linear"))
 
     assert stats.name == "layer1"
     assert stats.param_count == 4
@@ -30,6 +31,7 @@ def test_basic_stats_engine_computes_expected_stats() -> None:
     np.testing.assert_allclose(stats.max, 4.0)
     np.testing.assert_allclose(stats.l2_norm, np.sqrt(30.0))
     np.testing.assert_allclose(stats.sparsity, 0.0)
+    np.testing.assert_allclose(stats.p99_abs, expected_p99_abs)
 
 
 def test_basic_stats_engine_reports_zero_sparsity_metrics() -> None:
@@ -44,6 +46,7 @@ def test_basic_stats_engine_reports_zero_sparsity_metrics() -> None:
     np.testing.assert_allclose(stats.max, 0.0)
     np.testing.assert_allclose(stats.l2_norm, 0.0)
     np.testing.assert_allclose(stats.sparsity, 1.0)
+    np.testing.assert_allclose(stats.p99_abs, 0.0)
     assert stats.param_count == 5
 
 

@@ -8,7 +8,7 @@ import numpy as np
 import pytest
 import torch
 
-from weightlens.sources.pytorch_weight_source import PyTorchWeightSource
+from weightlens.sources.pytorch import PyTorchWeightSource
 
 
 def _save_checkpoint(tmp_path: Path) -> Path:
