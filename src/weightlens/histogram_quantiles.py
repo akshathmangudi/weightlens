@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from array import array
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -13,7 +14,7 @@ class FixedRangeHistogramQuantiles:
     min_value: float
     max_value: float
     bins: int = 2048
-    _counts: NDArray[np.float64] = field(init=False)
+    _counts: array[float] = field(init=False)
     _underflow: int = 0
     _overflow: int = 0
     _total: int = 0
@@ -23,7 +24,7 @@ class FixedRangeHistogramQuantiles:
             raise ValueError("max_value must be greater than min_value.")
         if self.bins <= 0:
             raise ValueError("bins must be positive.")
-        self._counts = np.zeros(self.bins, dtype=np.float64)
+        self._counts = array("d", [0.0] * self.bins)
 
     def update(self, values: NDArray[np.number]) -> None:
         if values.size == 0:
@@ -37,7 +38,10 @@ class FixedRangeHistogramQuantiles:
             bins=self.bins,
             range=(self.min_value, self.max_value),
         )
-        self._counts += counts.astype(np.float64, copy=False)
+        counts_view: NDArray[np.float64] = np.frombuffer(
+            self._counts, dtype=np.float64
+        )
+        counts_view += counts
         self._total += int(values.size)
 
     def quantile(self, q: float) -> float:
@@ -52,12 +56,16 @@ class FixedRangeHistogramQuantiles:
         if target >= self._total - self._overflow:
             return self.max_value
 
-        cumulative = np.cumsum(self._counts)
+        cumulative = np.cumsum(self._counts, dtype=np.float64)
         idx = int(np.searchsorted(cumulative, target - self._underflow, side="right"))
         idx = min(idx, self.bins - 1)
 
-        prev = cumulative[idx - 1] if idx > 0 else 0.0
-        bin_count = self._counts[idx]
-        frac = 0.0 if bin_count == 0.0 else (target - self._underflow - prev) / bin_count
+        prev = float(cumulative[idx - 1]) if idx > 0 else 0.0
+        bin_count = float(self._counts[idx])
+        frac = (
+            0.0
+            if bin_count == 0.0
+            else (target - self._underflow - prev) / bin_count
+        )
         width = (self.max_value - self.min_value) / self.bins
         return self.min_value + (idx + frac) * width
