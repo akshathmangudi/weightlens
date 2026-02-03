@@ -15,6 +15,7 @@ Weightlens is an analysis tool for checkpoint weights.
 
 ## Performance 
 | File size of `.pth` | Time taken | 
+|---------------------|------------|
 | ~ 200 MB | ~ 6 seconds | 
 | ~ 1.5GB | ~ 16 seconds | 
 
