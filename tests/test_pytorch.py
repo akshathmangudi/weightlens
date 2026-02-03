@@ -69,3 +69,5 @@ def test_pytorch_weight_source_skips_non_float_tensors(tmp_path: Path) -> None:
     names = [layer.name for layer in source.iter_layers()]
 
     assert names == ["layer1", "layer2"]
+
+

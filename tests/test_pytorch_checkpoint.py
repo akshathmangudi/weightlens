@@ -49,7 +49,9 @@ def test_validator_flags_load_failure_for_corrupt_checkpoint(
     assert "load_failed" in health.corruption_flags
 
 
-def test_validator_flags_non_tensor_entries(tmp_path: Path) -> None:
+def test_validator_flags_non_tensor_entries(
+    tmp_path: Path,
+) -> None:
     state: OrderedDict[str, object] = OrderedDict(
         layer1=torch.tensor([1.0], dtype=torch.float32),
         meta="not-a-tensor",

@@ -150,3 +150,21 @@ def test_streaming_global_aggregator_rejects_empty_finalize() -> None:
     aggregator = StreamingGlobalAggregator()
     with pytest.raises(ValueError, match="No values"):
         aggregator.finalize()
+
+
+def test_streaming_global_aggregator_clamps_overflow_quantiles() -> None:
+    values = np.array([-10.0, -1.0, 0.0, 1.0, 10.0], dtype=np.float64)
+    aggregator = StreamingGlobalAggregator(
+        histogram_bins=2048,
+        histogram_min=-1.0,
+        histogram_max=1.0,
+    )
+    aggregator.update(values)
+    aggregator.update_layer_stats(
+        _make_layer_stats(std=1.0, l2_norm=2.0, name="layer")
+    )
+
+    stats = aggregator.finalize()
+
+    assert stats.p1 == -1.0
+    assert stats.p99 == 1.0

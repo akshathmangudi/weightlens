@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import cast
@@ -8,6 +9,8 @@ import torch
 
 from weightlens.contracts import CheckpointValidator
 from weightlens.models import CheckpointHealth
+
+logger = logging.getLogger(__name__)
 
 
 class PyTorchCheckpointValidator(CheckpointValidator):
@@ -21,16 +24,29 @@ class PyTorchCheckpointValidator(CheckpointValidator):
     def validate(self) -> CheckpointHealth:
         file_size_bytes = self._checkpoint_path.stat().st_size
         corruption_flags: list[str] = []
+        logger.info(
+            "Starting validation for checkpoint %s (size=%d bytes).",
+            self._checkpoint_path,
+            file_size_bytes,
+        )
 
         if file_size_bytes == 0:
-            return CheckpointHealth(
+            corruption_flags.append("empty_file")
+            logger.debug("Flagged empty_file for %s.", self._checkpoint_path)
+            health = CheckpointHealth(
                 file_size_bytes=file_size_bytes,
                 is_empty=True,
                 loadable=False,
                 tensor_count=0,
                 total_params=0,
-                corruption_flags=["empty_file"],
+                corruption_flags=corruption_flags,
             )
+            logger.info(
+                "Validation completed for %s: %s.",
+                self._checkpoint_path,
+                health.model_dump(),
+            )
+            return health
 
         try:
             checkpoint = torch.load(
@@ -40,8 +56,9 @@ class PyTorchCheckpointValidator(CheckpointValidator):
                 mmap=True,
             )
         except Exception:
+            logger.exception("Failed to load checkpoint %s.", self._checkpoint_path)
             corruption_flags.append("load_failed")
-            return CheckpointHealth(
+            health = CheckpointHealth(
                 file_size_bytes=file_size_bytes,
                 is_empty=False,
                 loadable=False,
@@ -49,10 +66,17 @@ class PyTorchCheckpointValidator(CheckpointValidator):
                 total_params=0,
                 corruption_flags=corruption_flags,
             )
+            logger.info(
+                "Validation completed for %s: %s.",
+                self._checkpoint_path,
+                health.model_dump(),
+            )
+            return health
 
         if not isinstance(checkpoint, Mapping):
+            logger.error("Checkpoint %s is not a mapping.", self._checkpoint_path)
             corruption_flags.append("not_mapping")
-            return CheckpointHealth(
+            health = CheckpointHealth(
                 file_size_bytes=file_size_bytes,
                 is_empty=False,
                 loadable=False,
@@ -60,6 +84,12 @@ class PyTorchCheckpointValidator(CheckpointValidator):
                 total_params=0,
                 corruption_flags=corruption_flags,
             )
+            logger.info(
+                "Validation completed for %s: %s.",
+                self._checkpoint_path,
+                health.model_dump(),
+            )
+            return health
 
         typed_checkpoint = cast(Mapping[str, object], checkpoint)
         tensor_count = 0
@@ -67,7 +97,9 @@ class PyTorchCheckpointValidator(CheckpointValidator):
 
         for name, value in typed_checkpoint.items():
             if not isinstance(value, torch.Tensor):
-                corruption_flags.append(f"non_tensor:{name}")
+                flag = f"non_tensor:{name}"
+                corruption_flags.append(flag)
+                logger.debug("Flagged %s.", flag)
                 continue
 
             tensor_count += 1
@@ -75,23 +107,36 @@ class PyTorchCheckpointValidator(CheckpointValidator):
             try:
                 numel = int(value.numel())
             except Exception:
-                corruption_flags.append(f"tensor_access_failed:{name}")
+                flag = f"tensor_access_failed:{name}"
+                corruption_flags.append(flag)
+                logger.exception("Tensor access failed for %s.", name)
                 continue
 
             total_params += numel
+            logger.debug(
+                "Counted tensor %s (numel=%d). totals: tensors=%d params=%d.",
+                name,
+                numel,
+                tensor_count,
+                total_params,
+            )
 
             if numel == 0:
-                corruption_flags.append(f"empty_tensor:{name}")
+                flag = f"empty_tensor:{name}"
+                corruption_flags.append(flag)
+                logger.debug("Flagged %s.", flag)
                 continue
 
             try:
                 self._check_tensor(name, value, corruption_flags)
             except Exception:
-                corruption_flags.append(f"tensor_access_failed:{name}")
+                flag = f"tensor_access_failed:{name}"
+                corruption_flags.append(flag)
+                logger.exception("Tensor access failed for %s.", name)
 
         is_empty = tensor_count == 0
 
-        return CheckpointHealth(
+        health = CheckpointHealth(
             file_size_bytes=file_size_bytes,
             is_empty=is_empty,
             loadable=True,
@@ -99,6 +144,12 @@ class PyTorchCheckpointValidator(CheckpointValidator):
             total_params=total_params,
             corruption_flags=corruption_flags,
         )
+        logger.info(
+            "Validation completed for %s: %s.",
+            self._checkpoint_path,
+            health.model_dump(),
+        )
+        return health
 
     @classmethod
     def _iter_chunks(cls, tensor: torch.Tensor) -> Iterator[torch.Tensor]:
@@ -133,7 +184,11 @@ class PyTorchCheckpointValidator(CheckpointValidator):
             data = data.cpu()
 
         if cls._is_nan_flood(data):
-            corruption_flags.append(f"nan_flood:{name}")
+            flag = f"nan_flood:{name}"
+            corruption_flags.append(flag)
+            logger.debug("Flagged %s.", flag)
 
         if cls._is_zero_flood(data):
-            corruption_flags.append(f"zero_flood:{name}")
+            flag = f"zero_flood:{name}"
+            corruption_flags.append(flag)
+            logger.debug("Flagged %s.", flag)

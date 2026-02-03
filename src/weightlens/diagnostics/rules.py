@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import math
 from typing import Literal
 
 from weightlens.contracts import DiagnosticRule
 from weightlens.models import DiagnosticFlag, GlobalStats, LayerStats
+
+logger = logging.getLogger(__name__)
 
 
 class DeadLayerRule(DiagnosticRule):
@@ -20,12 +23,19 @@ class DeadLayerRule(DiagnosticRule):
         _ = global_stats
         dead_fraction = float(layer.sparsity)
         if dead_fraction >= 0.9999:
-            return DiagnosticFlag(
+            flag = DiagnosticFlag(
                 layer=layer.name,
                 rule="dead-layer",
                 message=f"dead_fraction={dead_fraction:.6f} >= 0.9999",
                 severity=self.severity,
             )
+            logger.error(
+                "Diagnostic rule %s triggered for %s: %s.",
+                flag.rule,
+                flag.layer,
+                flag.message,
+            )
+            return flag
         return None
 
 
@@ -46,16 +56,30 @@ class ExplodingVarianceRule(DiagnosticRule):
             or not math.isfinite(median_variance)
             or median_variance <= 0.0
         ):
+            logger.debug(
+                "Skipping exploding-variance for %s due to invalid denominator "
+                "(variance=%s median_variance=%s).",
+                layer.name,
+                variance,
+                median_variance,
+            )
             return None
 
         ratio = variance / median_variance
         if ratio >= 10.0:
-            return DiagnosticFlag(
+            flag = DiagnosticFlag(
                 layer=layer.name,
                 rule="exploding-variance",
                 message=f"variance_ratio={ratio:.3f} >= 10.0",
                 severity=self.severity,
             )
+            logger.warning(
+                "Diagnostic rule %s triggered for %s: %s.",
+                flag.rule,
+                flag.layer,
+                flag.message,
+            )
+            return flag
         return None
 
 
@@ -77,16 +101,30 @@ class ExtremeSpikeRule(DiagnosticRule):
             or not math.isfinite(p99_abs)
             or p99_abs <= 0.0
         ):
+            logger.debug(
+                "Skipping extreme-spike for %s due to invalid denominator "
+                "(max_abs=%s p99_abs=%s).",
+                layer.name,
+                max_abs,
+                p99_abs,
+            )
             return None
 
         ratio = max_abs / p99_abs
         if ratio >= 100.0:
-            return DiagnosticFlag(
+            flag = DiagnosticFlag(
                 layer=layer.name,
                 rule="extreme-spike",
                 message=f"spike_ratio={ratio:.3f} >= 100.0",
                 severity=self.severity,
             )
+            logger.error(
+                "Diagnostic rule %s triggered for %s: %s.",
+                flag.rule,
+                flag.layer,
+                flag.message,
+            )
+            return flag
         return None
 
 
@@ -109,14 +147,29 @@ class AbnormalNormRule(DiagnosticRule):
             or not math.isfinite(iqr_norm)
             or iqr_norm <= 0.0
         ):
+            logger.debug(
+                "Skipping abnormal-norm for %s due to invalid denominator "
+                "(norm=%s median_norm=%s iqr_norm=%s).",
+                layer.name,
+                norm,
+                median_norm,
+                iqr_norm,
+            )
             return None
 
         z_score = (norm - median_norm) / iqr_norm
         if abs(z_score) >= 5.0:
-            return DiagnosticFlag(
+            flag = DiagnosticFlag(
                 layer=layer.name,
                 rule="abnormal-norm",
                 message=f"norm_z_score={z_score:.3f} exceeds +/-5.0",
                 severity=self.severity,
             )
+            logger.warning(
+                "Diagnostic rule %s triggered for %s: %s.",
+                flag.rule,
+                flag.layer,
+                flag.message,
+            )
+            return flag
         return None

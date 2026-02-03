@@ -2,27 +2,34 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from weightlens.contracts import DiagnosticRule
+    from weightlens.models import DiagnosticFlag, LayerStats
 
 REPO_ROOT = Path(__file__).resolve().parent
 SRC_DIR = REPO_ROOT / "src"
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
 
-from weightlens.aggregators import StreamingGlobalAggregator
-from weightlens.contracts import DiagnosticRule
-from weightlens.diagnostics import (
-    AbnormalNormRule,
-    DeadLayerRule,
-    ExplodingVarianceRule,
-    ExtremeSpikeRule,
-)
-from weightlens.models import DiagnosticFlag, LayerStats
-from weightlens.sources import PyTorchWeightSource
-from weightlens.stats_engines import BasicStatsEngine
-from weightlens.validators import PyTorchCheckpointValidator
+
+def _ensure_src_path() -> None:
+    if str(SRC_DIR) not in sys.path:
+        sys.path.insert(0, str(SRC_DIR))
 
 
 def analyze(checkpoint_path: Path) -> None:
+    _ensure_src_path()
+    from weightlens.aggregators import StreamingGlobalAggregator
+    from weightlens.diagnostics import (
+        AbnormalNormRule,
+        DeadLayerRule,
+        ExplodingVarianceRule,
+        ExtremeSpikeRule,
+    )
+    from weightlens.sources import PyTorchWeightSource
+    from weightlens.stats_engines import BasicStatsEngine
+    from weightlens.validators import PyTorchCheckpointValidator
+
     validator = PyTorchCheckpointValidator(checkpoint_path)
     health = validator.validate()
     print(f"\n== {checkpoint_path} ==")
