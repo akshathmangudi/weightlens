@@ -22,6 +22,21 @@ Weightlens is an analysis tool for checkpoint weights.
 ## To use
 Simply run `pip install weightlens` into your virtual environment and start by running `lens analyze <filename>.pth`
 
+## Demo: corrupted checkpoints
+Generate a clean checkpoint and two corrupted variants, then compare manual loading
+versus Weightlens diagnostics.
+
+```bash
+python demo/make_clean_ckpt.py
+python demo/corrupt_ckpt.py
+
+lens analyze demo/checkpoints/clean.pth
+lens analyze demo/checkpoints/corrupted_zero.pth
+lens analyze demo/checkpoints/corrupted_spike.pth
+```
+
+If `lens` is not on your PATH, use `python -m weightlens.cli analyze ...` instead.
+
 ## Status
 ALL TESTS AND LINT CHECKS PASS.
 
