@@ -12,6 +12,7 @@ import torch
 
 from weightlens.aggregators.streaming_global import StreamingGlobalAggregator
 from weightlens.analyzer import Analyzer
+from weightlens.classifiers import PyTorchParameterClassifier
 from weightlens.contracts import CheckpointValidator, WeightSource
 from weightlens.diagnostics import (
     AbnormalNormRule,
@@ -92,6 +93,7 @@ def test_analyzer_happy_path(tmp_path: Path) -> None:
             ExtremeSpikeRule(),
             AbnormalNormRule(),
         ],
+        classifier=PyTorchParameterClassifier(),
     )
 
     result = analyzer.analyze()
@@ -153,6 +155,7 @@ def test_analyzer_streams_large_synthetic_model() -> None:
         stats_engine=BasicStatsEngine(),
         aggregator=StreamingGlobalAggregator(),
         rules=[],
+        classifier=PyTorchParameterClassifier(),
     )
 
     result = analyzer.analyze()

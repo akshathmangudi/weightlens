@@ -10,6 +10,7 @@ from rich.table import Table
 
 from weightlens.aggregators import StreamingGlobalAggregator
 from weightlens.analyzer import Analyzer
+from weightlens.classifiers import PyTorchParameterClassifier
 from weightlens.contracts import CheckpointValidator
 from weightlens.diagnostics import (
     AbnormalNormRule,
@@ -87,6 +88,7 @@ def _run_analyze(checkpoint_path: Path, *, console: Console | None) -> int:
             ExtremeSpikeRule(),
             AbnormalNormRule(),
         ],
+        classifier=PyTorchParameterClassifier(),
     )
     result = analyzer.analyze()
 

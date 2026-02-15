@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import math
 
+from weightlens.categories import ALL_DIAGNOSTIC_CATEGORIES
 from weightlens.diagnostics.rules import (
     AbnormalNormRule,
     DeadLayerRule,
@@ -146,3 +147,57 @@ def test_abnormal_norm_rule_guards_non_positive_denominator() -> None:
     global_stats = _make_global_stats(median_layer_norm=10.0, iqr_layer_norm=0.0)
 
     assert rule.check(layer, global_stats) is None
+
+
+# --- applicable_categories tests ---
+
+
+def test_dead_layer_applicable_categories() -> None:
+    rule = DeadLayerRule()
+    cats = rule.applicable_categories
+    assert "kernel" in cats
+    assert "embedding" in cats
+    assert "bias" not in cats
+    assert "norm_scale" not in cats
+    assert "norm_shift" not in cats
+    assert "buffer" not in cats
+
+
+def test_exploding_variance_applicable_categories() -> None:
+    rule = ExplodingVarianceRule()
+    cats = rule.applicable_categories
+    assert "kernel" in cats
+    assert "embedding" in cats
+    assert "adapter" in cats
+    assert "bias" not in cats
+    assert "norm_scale" not in cats
+
+
+def test_extreme_spike_applicable_categories() -> None:
+    rule = ExtremeSpikeRule()
+    cats = rule.applicable_categories
+    assert "kernel" in cats
+    assert "embedding" in cats
+    assert "bias" not in cats
+    assert "norm_scale" not in cats
+
+
+def test_abnormal_norm_applicable_categories() -> None:
+    rule = AbnormalNormRule()
+    cats = rule.applicable_categories
+    assert "kernel" in cats
+    assert "embedding" in cats
+    assert "adapter" in cats
+    assert "bias" not in cats
+    assert "norm_scale" not in cats
+
+
+def test_all_rules_return_subset_of_diagnostic_categories() -> None:
+    rules = [
+        DeadLayerRule(),
+        ExplodingVarianceRule(),
+        ExtremeSpikeRule(),
+        AbnormalNormRule(),
+    ]
+    for rule in rules:
+        assert rule.applicable_categories <= ALL_DIAGNOSTIC_CATEGORIES

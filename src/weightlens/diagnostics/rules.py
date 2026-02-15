@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from weightlens.contracts import DiagnosticRule
 from weightlens.models import DiagnosticFlag, GlobalStats, LayerStats
+
+if TYPE_CHECKING:
+    from weightlens.categories import ParameterCategory
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +19,10 @@ class DeadLayerRule(DiagnosticRule):
     @property
     def severity(self) -> Literal["info", "warn", "error"]:
         return "error"
+
+    @property
+    def applicable_categories(self) -> frozenset[ParameterCategory]:
+        return frozenset(["kernel", "embedding"])
 
     def check(
         self, layer: LayerStats, global_stats: GlobalStats
@@ -45,6 +52,10 @@ class ExplodingVarianceRule(DiagnosticRule):
     @property
     def severity(self) -> Literal["info", "warn", "error"]:
         return "warn"
+
+    @property
+    def applicable_categories(self) -> frozenset[ParameterCategory]:
+        return frozenset(["kernel", "embedding", "adapter"])
 
     def check(
         self, layer: LayerStats, global_stats: GlobalStats
@@ -90,6 +101,10 @@ class ExtremeSpikeRule(DiagnosticRule):
     def severity(self) -> Literal["info", "warn", "error"]:
         return "error"
 
+    @property
+    def applicable_categories(self) -> frozenset[ParameterCategory]:
+        return frozenset(["kernel", "embedding"])
+
     def check(
         self, layer: LayerStats, global_stats: GlobalStats
     ) -> DiagnosticFlag | None:
@@ -134,6 +149,10 @@ class AbnormalNormRule(DiagnosticRule):
     @property
     def severity(self) -> Literal["info", "warn", "error"]:
         return "warn"
+
+    @property
+    def applicable_categories(self) -> frozenset[ParameterCategory]:
+        return frozenset(["kernel", "embedding", "adapter"])
 
     def check(
         self, layer: LayerStats, global_stats: GlobalStats

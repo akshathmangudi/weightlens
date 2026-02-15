@@ -43,6 +43,7 @@ class LayerStats(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
 
     name: str
+    category: str = "kernel"
     mean: float
     std: float
     min: float
@@ -88,5 +89,6 @@ class AnalysisResult(BaseModel):
 
     layer_stats: list[LayerStats]
     global_stats: GlobalStats
+    bucket_stats: dict[str, GlobalStats]
     diagnostics: list[DiagnosticFlag]
     health: CheckpointHealth

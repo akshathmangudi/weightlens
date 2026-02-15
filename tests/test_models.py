@@ -158,9 +158,11 @@ def test_analysis_result_accepts_valid_payload() -> None:
     result = AnalysisResult(
         layer_stats=[make_layer_stats()],
         global_stats=make_global_stats(),
+        bucket_stats={"kernel": make_global_stats()},
         diagnostics=[make_diagnostic_flag()],
         health=make_checkpoint_health(),
     )
 
     assert result.global_stats.mean == 0.02
     assert result.layer_stats[0].name == "encoder.weight"
+    assert "kernel" in result.bucket_stats
