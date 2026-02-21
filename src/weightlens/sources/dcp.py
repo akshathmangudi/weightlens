@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import logging
 import os
+import pickle
 import warnings
 from collections import defaultdict
 from collections.abc import Iterator
@@ -74,20 +75,49 @@ def make_reader(checkpoint_dir: str | Path) -> Any:
     return reader
 
 
-def _find_shard_dim(offsets_list: list[torch.Size]) -> int:
-    """Return the dimension along which chunks are sharded.
+class _TolerantUnpickler(pickle.Unpickler):
+    """Unpickler that stubs missing modules instead of raising.
 
-    Compares chunk offsets to find the first dimension where values differ.
-    Falls back to dim 0 if all offsets are identical (shouldn't happen for
-    multi-chunk tensors, but safe default).
+    DCP metadata files are pickled Python objects.  When a checkpoint was
+    saved by a framework like Megatron-LM, the pickle may reference
+    classes from ``megatron.core`` or similar packages that are not
+    installed in the analysis environment.  This unpickler creates
+    lightweight stub classes on the fly so the metadata can still be
+    loaded.
     """
-    if len(offsets_list) <= 1 or len(offsets_list[0]) == 0:
-        return 0
-    for dim in range(len(offsets_list[0])):
-        vals = {o[dim] for o in offsets_list}
-        if len(vals) > 1:
-            return dim
-    return 0
+
+    def find_class(self, module: str, name: str) -> type:
+        try:
+            cls: type = super().find_class(module, name)
+            return cls
+        except (ModuleNotFoundError, AttributeError):
+            logger.debug(
+                "Stubbing missing class %s.%s during metadata unpickling.",
+                module,
+                name,
+            )
+            stub: type = type(name, (), {"__module__": module})
+            return stub
+
+
+def read_metadata(checkpoint_dir: str | Path) -> Any:
+    """Read DCP metadata with fault-tolerant unpickling.
+
+    Falls back to a :class:`_TolerantUnpickler` when the standard
+    ``reader.read_metadata()`` raises due to missing third-party
+    modules (e.g. ``megatron.core``).
+    """
+    reader = make_reader(checkpoint_dir)
+    try:
+        return reader.read_metadata()
+    except (ModuleNotFoundError, AttributeError):
+        logger.info(
+            "Standard metadata read failed; retrying with tolerant unpickler."
+        )
+    # Re-read the metadata file ourselves with the tolerant unpickler.
+    meta_path = find_metadata_path(checkpoint_dir)
+    with open(meta_path, "rb") as f:
+        return _TolerantUnpickler(f).load()
 
 
 class DCPWeightSource(WeightSource):
@@ -112,7 +142,7 @@ class DCPWeightSource(WeightSource):
             stacklevel=2,
         )
 
-        metadata = make_reader(self._checkpoint_dir).read_metadata()
+        metadata = read_metadata(self._checkpoint_dir)
 
         # Build lookup: tensor fqn → list of (chunk_offsets, storage_info)
         # storage_info has .relative_path, .offset, .length attributes.
@@ -187,13 +217,17 @@ class DCPWeightSource(WeightSource):
             if len(loaded_chunks) == 1:
                 tensor = loaded_chunks[0][1]
             else:
-                shard_dim = _find_shard_dim(
-                    [offsets for offsets, _ in loaded_chunks]
-                )
-                # Chunks are already sorted by offset.
-                tensor = torch.cat(
-                    [t for _, t in loaded_chunks], dim=shard_dim
-                )
+                full_shape = torch.Size(storage_meta.size)
+                tensor = torch.empty(full_shape, dtype=dtype)
+                for chunk_offsets, chunk_tensor in loaded_chunks:
+                    # Build a slice for each dimension from offset + chunk shape.
+                    slices = tuple(
+                        slice(int(off), int(off) + int(dim))
+                        for off, dim in zip(
+                            chunk_offsets, chunk_tensor.shape, strict=True
+                        )
+                    )
+                    tensor[slices] = chunk_tensor
                 # Free individual chunks.
                 for _, chunk_t in loaded_chunks:
                     del chunk_t

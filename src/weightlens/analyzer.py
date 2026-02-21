@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 from typing import Protocol, cast, runtime_checkable
 
@@ -13,6 +14,8 @@ from weightlens.contracts import (
     WeightSource,
 )
 from weightlens.models import AnalysisResult, DiagnosticFlag, LayerStats
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -58,6 +61,7 @@ class Analyzer:
         # Per-bucket aggregators (lazy, created on first encounter)
         bucket_aggregators: dict[str, StreamingGlobalAggregator] = {}
 
+        diagnostics: list[DiagnosticFlag] = []
         layer_stats: list[LayerStats] = []
         for layer in self._source.iter_layers():
             # Classify this parameter
@@ -71,12 +75,43 @@ class Analyzer:
             if category == "skip":
                 continue
 
-            stats = self._stats_engine.compute_layer(layer)
+            try:
+                stats = self._stats_engine.compute_layer(layer)
+            except ValueError:
+                logger.warning(
+                    "Skipping layer %s: non-finite or invalid values.", layer.name
+                )
+                diagnostics.append(
+                    DiagnosticFlag(
+                        layer=layer.name,
+                        rule="non-finite-values",
+                        message="Layer contains NaN or Inf values",
+                        severity="error",
+                    )
+                )
+                continue
+
             stats = stats.model_copy(update={"category": category})
             layer_stats.append(stats)
 
             # Feed the overall aggregator (preserves existing behaviour)
-            self._aggregator.update(layer.values)
+            try:
+                self._aggregator.update(layer.values)
+            except ValueError:
+                logger.warning(
+                    "Skipping layer %s in global aggregation: non-finite stats.",
+                    layer.name,
+                )
+                layer_stats.pop()
+                diagnostics.append(
+                    DiagnosticFlag(
+                        layer=layer.name,
+                        rule="non-finite-values",
+                        message="Layer produces non-finite global statistics",
+                        severity="error",
+                    )
+                )
+                continue
             layer_stats_consumer.update_layer_stats(stats)
 
             # Feed the per-bucket aggregator
@@ -94,7 +129,6 @@ class Analyzer:
         }
 
         # Run diagnostics using per-bucket global stats
-        diagnostics: list[DiagnosticFlag] = []
         for stats in layer_stats:
             cat = stats.category
             bucket_global = bucket_stats.get(cat)

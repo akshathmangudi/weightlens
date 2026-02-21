@@ -99,10 +99,9 @@ class DCPCheckpointValidator(CheckpointValidator):
 
         # Phase 5: parse metadata
         try:
-            from weightlens.sources.dcp import make_reader
+            from weightlens.sources.dcp import read_metadata
 
-            reader = make_reader(self._checkpoint_dir)
-            metadata = reader.read_metadata()
+            metadata = read_metadata(self._checkpoint_dir)
         except Exception:
             logger.exception(
                 "Failed to read DCP metadata for %s.", self._checkpoint_dir
