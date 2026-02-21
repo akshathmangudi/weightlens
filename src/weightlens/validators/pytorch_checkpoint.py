@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import pickle
 from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import cast
@@ -11,6 +12,45 @@ from weightlens.contracts import CheckpointValidator
 from weightlens.models import CheckpointHealth
 
 logger = logging.getLogger(__name__)
+
+_STATE_DICT_KEYS = ("model", "state_dict", "module")
+"""Common keys that wrap the actual state dict in training checkpoints."""
+
+
+def _extract_state_dict(checkpoint: Mapping[str, object]) -> Mapping[str, object]:
+    """Unwrap a nested training checkpoint to the tensor mapping.
+
+    If the top-level mapping contains a known wrapper key (e.g. ``model``,
+    ``state_dict``), return the inner dict.  Otherwise return as-is.
+    """
+    for key in _STATE_DICT_KEYS:
+        inner = checkpoint.get(key)
+        if isinstance(inner, Mapping):
+            logger.info("Extracting nested state dict from key %r.", key)
+            return cast(Mapping[str, object], inner)
+    return checkpoint
+
+
+def _load_checkpoint(path: Path) -> object:
+    """Load a checkpoint with safe fallback.
+
+    Tries ``weights_only=True`` first.  If that fails with an
+    ``UnpicklingError`` (e.g. numpy scalar globals), retries with
+    ``weights_only=False`` and logs a warning.
+    """
+    try:
+        return torch.load(
+            path, weights_only=True, map_location="cpu", mmap=True
+        )
+    except pickle.UnpicklingError:
+        logger.warning(
+            "weights_only=True failed for %s, retrying with "
+            "weights_only=False.",
+            path,
+        )
+        return torch.load(
+            path, weights_only=False, map_location="cpu", mmap=True
+        )
 
 
 class PyTorchCheckpointValidator(CheckpointValidator):
@@ -49,12 +89,7 @@ class PyTorchCheckpointValidator(CheckpointValidator):
             return health
 
         try:
-            checkpoint = torch.load(
-                self._checkpoint_path,
-                weights_only=True,
-                map_location="cpu",
-                mmap=True,
-            )
+            checkpoint = _load_checkpoint(self._checkpoint_path)
         except Exception:
             logger.exception("Failed to load checkpoint %s.", self._checkpoint_path)
             corruption_flags.append("load_failed")
@@ -91,7 +126,9 @@ class PyTorchCheckpointValidator(CheckpointValidator):
             )
             return health
 
-        typed_checkpoint = cast(Mapping[str, object], checkpoint)
+        typed_checkpoint = _extract_state_dict(
+            cast(Mapping[str, object], checkpoint)
+        )
         tensor_count = 0
         total_params = 0
 

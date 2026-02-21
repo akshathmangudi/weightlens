@@ -20,7 +20,8 @@ class ToyNet(nn.Module):
         x = self.conv2(x)
         x = torch.flatten(x, 1)
         x = self.fc1(x)
-        return self.fc2(x)
+        result: torch.Tensor = self.fc2(x)
+        return result
 
 
 def main() -> None:

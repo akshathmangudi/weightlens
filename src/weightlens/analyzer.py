@@ -1,8 +1,13 @@
 from __future__ import annotations
 
 import logging
+from collections import deque
 from collections.abc import Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
 from typing import Protocol, cast, runtime_checkable
+
+import numpy as np
+from numpy.typing import NDArray
 
 from weightlens.aggregators import StreamingGlobalAggregator
 from weightlens.contracts import (
@@ -13,7 +18,14 @@ from weightlens.contracts import (
     StatsEngine,
     WeightSource,
 )
-from weightlens.models import AnalysisResult, DiagnosticFlag, LayerStats
+from weightlens.memory import compute_max_workers
+from weightlens.models import (
+    AnalysisResult,
+    DiagnosticFlag,
+    LayerStats,
+    LayerTensor,
+)
+from weightlens.prefetch import PrefetchIterator
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +49,8 @@ class Analyzer:
         aggregator: GlobalAggregator,
         rules: Sequence[DiagnosticRule],
         classifier: ParameterClassifier | None = None,
+        prefetch: bool = True,
+        num_workers: int | None = None,
     ) -> None:
         self._source = source
         self._validator = validator
@@ -44,10 +58,17 @@ class Analyzer:
         self._aggregator = aggregator
         self._rules = list(rules)
         self._classifier = classifier
+        self._prefetch = prefetch
+        self._num_workers = num_workers
 
     def _create_bucket_aggregator(self) -> StreamingGlobalAggregator:
         """Create a fresh aggregator for a parameter bucket."""
         return StreamingGlobalAggregator()
+
+    def _resolve_workers(self) -> int:
+        if self._num_workers is not None:
+            return max(1, self._num_workers)
+        return compute_max_workers()
 
     def analyze(self) -> AnalysisResult:
         health = self._validator.validate()
@@ -58,20 +79,35 @@ class Analyzer:
             raise TypeError("GlobalAggregator does not accept layer stats updates.")
         layer_stats_consumer = cast(LayerStatsConsumer, self._aggregator)
 
-        # Per-bucket aggregators (lazy, created on first encounter)
-        bucket_aggregators: dict[str, StreamingGlobalAggregator] = {}
+        num_workers = self._resolve_workers()
 
+        if num_workers > 1:
+            return self._analyze_parallel(layer_stats_consumer, health, num_workers)
+        return self._analyze_sequential(layer_stats_consumer, health)
+
+    def _classify(self, layer: LayerTensor) -> str:
+        if self._classifier is not None:
+            return self._classifier.classify(layer.name, layer.shape, layer.dtype)
+        return "kernel"
+
+    def _analyze_sequential(
+        self,
+        layer_stats_consumer: LayerStatsConsumer,
+        health: object,
+    ) -> AnalysisResult:
+        from weightlens.models import CheckpointHealth
+
+        typed_health = cast(CheckpointHealth, health)
+        bucket_aggregators: dict[str, StreamingGlobalAggregator] = {}
         diagnostics: list[DiagnosticFlag] = []
         layer_stats: list[LayerStats] = []
-        for layer in self._source.iter_layers():
-            # Classify this parameter
-            if self._classifier is not None:
-                category = self._classifier.classify(
-                    layer.name, layer.shape, layer.dtype
-                )
-            else:
-                category = "kernel"
 
+        layer_iter = self._source.iter_layers()
+        if self._prefetch:
+            layer_iter = PrefetchIterator(layer_iter)
+
+        for layer in layer_iter:
+            category = self._classify(layer)
             if category == "skip":
                 continue
 
@@ -94,9 +130,14 @@ class Analyzer:
             stats = stats.model_copy(update={"category": category})
             layer_stats.append(stats)
 
-            # Feed the overall aggregator (preserves existing behaviour)
+            count = stats.param_count
+            mean = stats.mean
+            variance = stats.std**2
+
             try:
-                self._aggregator.update(layer.values)
+                self._aggregator.update_from_summary(
+                    layer.values, count=count, mean=mean, variance=variance
+                )
             except ValueError:
                 logger.warning(
                     "Skipping layer %s in global aggregation: non-finite stats.",
@@ -114,21 +155,146 @@ class Analyzer:
                 continue
             layer_stats_consumer.update_layer_stats(stats)
 
-            # Feed the per-bucket aggregator
             if category not in bucket_aggregators:
                 bucket_aggregators[category] = self._create_bucket_aggregator()
             bucket_agg = bucket_aggregators[category]
-            bucket_agg.update(layer.values)
+            bucket_agg.update_from_summary(
+                layer.values, count=count, mean=mean, variance=variance
+            )
             bucket_agg.update_layer_stats(stats)
 
+        return self._finalize(
+            layer_stats, diagnostics, bucket_aggregators, typed_health
+        )
+
+    def _analyze_parallel(
+        self,
+        layer_stats_consumer: LayerStatsConsumer,
+        health: object,
+        num_workers: int,
+    ) -> AnalysisResult:
+        from weightlens.models import CheckpointHealth
+
+        typed_health = cast(CheckpointHealth, health)
+        bucket_aggregators: dict[str, StreamingGlobalAggregator] = {}
+        diagnostics: list[DiagnosticFlag] = []
+        layer_stats: list[LayerStats] = []
+
+        # Bounded window of futures to cap memory usage
+        pending: deque[tuple[str, str, NDArray[np.number], Future[LayerStats]]] = (
+            deque()
+        )
+
+        layer_iter = self._source.iter_layers()
+        if self._prefetch:
+            layer_iter = PrefetchIterator(layer_iter)
+
+        with ThreadPoolExecutor(max_workers=num_workers) as pool:
+            for layer in layer_iter:
+                category = self._classify(layer)
+                if category == "skip":
+                    continue
+
+                future = pool.submit(self._stats_engine.compute_layer, layer)
+                pending.append((layer.name, category, layer.values, future))
+
+                # Drain completed futures from the front to bound memory
+                while len(pending) > num_workers and pending[0][3].done():
+                    self._drain_one(
+                        pending,
+                        layer_stats,
+                        diagnostics,
+                        bucket_aggregators,
+                        layer_stats_consumer,
+                    )
+
+            # Drain remaining futures in submission order
+            while pending:
+                self._drain_one(
+                    pending,
+                    layer_stats,
+                    diagnostics,
+                    bucket_aggregators,
+                    layer_stats_consumer,
+                )
+
+        return self._finalize(
+            layer_stats, diagnostics, bucket_aggregators, typed_health
+        )
+
+    def _drain_one(
+        self,
+        pending: deque[tuple[str, str, NDArray[np.number], Future[LayerStats]]],
+        layer_stats: list[LayerStats],
+        diagnostics: list[DiagnosticFlag],
+        bucket_aggregators: dict[str, StreamingGlobalAggregator],
+        layer_stats_consumer: LayerStatsConsumer,
+    ) -> None:
+        name, category, values, future = pending.popleft()
+        try:
+            stats = future.result()
+        except ValueError:
+            logger.warning("Skipping layer %s: non-finite or invalid values.", name)
+            diagnostics.append(
+                DiagnosticFlag(
+                    layer=name,
+                    rule="non-finite-values",
+                    message="Layer contains NaN or Inf values",
+                    severity="error",
+                )
+            )
+            return
+
+        stats = stats.model_copy(update={"category": category})
+        layer_stats.append(stats)
+
+        count = stats.param_count
+        mean = stats.mean
+        variance = stats.std**2
+
+        try:
+            self._aggregator.update_from_summary(
+                values, count=count, mean=mean, variance=variance
+            )
+        except ValueError:
+            logger.warning(
+                "Skipping layer %s in global aggregation: non-finite stats.",
+                name,
+            )
+            layer_stats.pop()
+            diagnostics.append(
+                DiagnosticFlag(
+                    layer=name,
+                    rule="non-finite-values",
+                    message="Layer produces non-finite global statistics",
+                    severity="error",
+                )
+            )
+            return
+        layer_stats_consumer.update_layer_stats(stats)
+
+        if category not in bucket_aggregators:
+            bucket_aggregators[category] = self._create_bucket_aggregator()
+        bucket_agg = bucket_aggregators[category]
+        bucket_agg.update_from_summary(
+            values, count=count, mean=mean, variance=variance
+        )
+        bucket_agg.update_layer_stats(stats)
+
+    def _finalize(
+        self,
+        layer_stats: list[LayerStats],
+        diagnostics: list[DiagnosticFlag],
+        bucket_aggregators: dict[str, StreamingGlobalAggregator],
+        health: object,
+    ) -> AnalysisResult:
+        from weightlens.models import CheckpointHealth
+
+        typed_health = cast(CheckpointHealth, health)
         global_stats = self._aggregator.finalize()
 
-        # Finalize per-bucket global stats
-        bucket_stats = {
-            cat: agg.finalize() for cat, agg in bucket_aggregators.items()
-        }
+        bucket_stats = {cat: agg.finalize() for cat, agg in bucket_aggregators.items()}
 
-        # Run diagnostics using per-bucket global stats
         for stats in layer_stats:
             cat = stats.category
             bucket_global = bucket_stats.get(cat)
@@ -146,5 +312,5 @@ class Analyzer:
             global_stats=global_stats,
             bucket_stats=bucket_stats,
             diagnostics=diagnostics,
-            health=health,
+            health=typed_health,
         )

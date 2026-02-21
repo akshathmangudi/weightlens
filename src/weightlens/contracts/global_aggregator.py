@@ -18,6 +18,21 @@ class GlobalAggregator(ABC):
         """Consume numeric values in a streaming fashion."""
         raise NotImplementedError
 
+    def update_from_summary(
+        self,
+        values: NDArray[np.number],
+        *,
+        count: int,
+        mean: float,
+        variance: float,
+    ) -> None:
+        """Consume values with pre-computed summary statistics.
+
+        Implementations may use *count*, *mean* and *variance* to skip
+        redundant recomputation.  The default falls back to :meth:`update`.
+        """
+        self.update(values)
+
     @abstractmethod
     def finalize(self) -> GlobalStats:
         """Return global statistics computed from all updates."""

@@ -60,6 +60,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Include optimizer state tensors in DCP analysis (default: skip them)",
     )
+    analyze.add_argument(
+        "--num-workers",
+        type=str,
+        default="1",
+        help="Number of parallel stats workers ('auto' or integer, default: 1)",
+    )
     return parser
 
 
@@ -99,7 +105,18 @@ def _render_health(console: Console, health: CheckpointHealth) -> None:
     console.print(table)
 
 
-def _run_analyze_pytorch(checkpoint_path: Path, *, console: Console) -> int:
+def _parse_num_workers(value: str) -> int | None:
+    if value == "auto":
+        return None
+    return int(value)
+
+
+def _run_analyze_pytorch(
+    checkpoint_path: Path,
+    *,
+    console: Console,
+    num_workers: int | None = None,
+) -> int:
     validator = PyTorchCheckpointValidator(checkpoint_path)
     try:
         health = validator.validate()
@@ -124,6 +141,7 @@ def _run_analyze_pytorch(checkpoint_path: Path, *, console: Console) -> int:
             AbnormalNormRule(),
         ],
         classifier=PyTorchParameterClassifier(),
+        num_workers=num_workers,
     )
     result = analyzer.analyze()
 
@@ -137,6 +155,7 @@ def _run_analyze_dcp(
     *,
     console: Console,
     include_optimizer: bool = False,
+    num_workers: int | None = None,
 ) -> int:
     from weightlens.sources.dcp import DCPWeightSource
     from weightlens.validators.dcp_checkpoint import DCPCheckpointValidator
@@ -171,9 +190,8 @@ def _run_analyze_dcp(
                 ExtremeSpikeRule(),
                 AbnormalNormRule(),
             ],
-            classifier=DCPParameterClassifier(
-                include_optimizer=include_optimizer
-            ),
+            classifier=DCPParameterClassifier(include_optimizer=include_optimizer),
+            num_workers=num_workers,
         )
         result = analyzer.analyze()
 
@@ -187,6 +205,7 @@ def _run_analyze(
     *,
     fmt: str = "auto",
     include_optimizer: bool = False,
+    num_workers: int | None = None,
     console: Console | None,
 ) -> int:
     out_console = console or Console()
@@ -205,8 +224,11 @@ def _run_analyze(
             checkpoint_path,
             console=out_console,
             include_optimizer=include_optimizer,
+            num_workers=num_workers,
         )
-    return _run_analyze_pytorch(checkpoint_path, console=out_console)
+    return _run_analyze_pytorch(
+        checkpoint_path, console=out_console, num_workers=num_workers
+    )
 
 
 def run_cli(
@@ -220,6 +242,7 @@ def run_cli(
             Path(args.checkpoint),
             fmt=args.format,
             include_optimizer=args.include_optimizer,
+            num_workers=_parse_num_workers(args.num_workers),
             console=console,
         )
     parser.error("Unknown command.")

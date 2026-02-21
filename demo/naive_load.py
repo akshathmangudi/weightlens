@@ -1,8 +1,7 @@
 from __future__ import annotations
 
 import torch
-
-from make_clean_ckpt import ToyNet
+from demo.make_clean_ckpt import ToyNet
 
 
 def load_model(path: str) -> ToyNet:

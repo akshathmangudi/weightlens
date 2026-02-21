@@ -14,6 +14,7 @@ import torch
 
 from weightlens.contracts import WeightSource
 from weightlens.models import LayerTensor
+from weightlens.tensor_utils import tensor_to_numpy
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +25,7 @@ Standard PyTorch DCP uses ``.metadata``; some Megatron-LM checkpoints
 write ``metadata`` (no dot prefix).
 """
 
-_FLOAT_DTYPES = frozenset(
-    {torch.float16, torch.float32, torch.float64, torch.bfloat16}
-)
+_FLOAT_DTYPES = frozenset({torch.float16, torch.float32, torch.float64, torch.bfloat16})
 
 
 def find_metadata_path(checkpoint_dir: str | Path) -> Path:
@@ -111,9 +110,7 @@ def read_metadata(checkpoint_dir: str | Path) -> Any:
     try:
         return reader.read_metadata()
     except (ModuleNotFoundError, AttributeError):
-        logger.info(
-            "Standard metadata read failed; retrying with tolerant unpickler."
-        )
+        logger.info("Standard metadata read failed; retrying with tolerant unpickler.")
     # Re-read the metadata file ourselves with the tolerant unpickler.
     meta_path = find_metadata_path(checkpoint_dir)
     with open(meta_path, "rb") as f:
@@ -146,9 +143,7 @@ class DCPWeightSource(WeightSource):
 
         # Build lookup: tensor fqn → list of (chunk_offsets, storage_info)
         # storage_info has .relative_path, .offset, .length attributes.
-        storage_lookup: dict[str, list[tuple[torch.Size, Any]]] = (
-            defaultdict(list)
-        )
+        storage_lookup: dict[str, list[tuple[torch.Size, Any]]] = defaultdict(list)
         for idx, info in metadata.storage_data.items():
             if not isinstance(idx, MetadataIndex):
                 continue
@@ -183,17 +178,13 @@ class DCPWeightSource(WeightSource):
 
             # Skip non-float tensors before loading data.
             if dtype not in _FLOAT_DTYPES:
-                logger.debug(
-                    "Skipping non-float tensor %s (dtype=%s).", name, dtype
-                )
+                logger.debug("Skipping non-float tensor %s (dtype=%s).", name, dtype)
                 continue
 
             # Read chunks via byte-offset seeks.
             chunk_info = storage_lookup.get(name, [])
             if not chunk_info:
-                logger.warning(
-                    "No storage_data entries for tensor %s, skipping.", name
-                )
+                logger.warning("No storage_data entries for tensor %s, skipping.", name)
                 continue
 
             # Sort chunks by their offset tuple for deterministic ordering.
@@ -232,8 +223,7 @@ class DCPWeightSource(WeightSource):
                 for _, chunk_t in loaded_chunks:
                     del chunk_t
 
-            materialized = tensor.detach().cpu().contiguous()
-            values = materialized.reshape(-1).float().numpy()
+            values = tensor_to_numpy(tensor)
             layer_count += 1
             logger.debug(
                 "Yielding layer %s shape=%s dtype=%s param_count=%d.",
@@ -251,7 +241,7 @@ class DCPWeightSource(WeightSource):
             )
 
             # Eagerly free the loaded tensor.
-            del loaded_chunks, tensor, materialized
+            del loaded_chunks, tensor
 
         logger.info(
             "Completed streaming for DCP checkpoint %s (layers=%d).",

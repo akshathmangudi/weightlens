@@ -56,6 +56,24 @@ class StreamingGlobalAggregator(GlobalAggregator):
         self._quantiles.update(values)
         logger.debug("Updated global aggregator count=%d.", self._count)
 
+    def update_from_summary(
+        self,
+        values: NDArray[np.number],
+        *,
+        count: int,
+        mean: float,
+        variance: float,
+    ) -> None:
+        """Accept pre-computed mean/variance to skip redundant array passes."""
+        if count == 0:
+            return
+        if not math.isfinite(mean) or not math.isfinite(variance):
+            raise ValueError("Non-finite value encountered in global aggregation.")
+
+        self._merge_batch(count, mean, variance * count)
+        self._quantiles.update(values)
+        logger.debug("Updated global aggregator (from summary) count=%d.", self._count)
+
     def update_layer_stats(self, layer_stats: LayerStats) -> None:
         self._layer_metrics.update(layer_stats)
 

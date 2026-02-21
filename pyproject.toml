@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "weightlens"
-version = "0.1.2a1"
+version = "0.1.2"
 description = "Statistical model analysis for ML model weights." 
 readme = "README.md" 
 requires-python = ">=3.11" 

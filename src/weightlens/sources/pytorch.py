@@ -9,6 +9,11 @@ import torch
 
 from weightlens.contracts import WeightSource
 from weightlens.models import LayerTensor
+from weightlens.tensor_utils import tensor_to_numpy
+from weightlens.validators.pytorch_checkpoint import (
+    _extract_state_dict,
+    _load_checkpoint,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -20,12 +25,7 @@ class PyTorchWeightSource(WeightSource):
         self._checkpoint_path = Path(checkpoint_path)
 
     def iter_layers(self) -> Iterator[LayerTensor]:
-        checkpoint = torch.load(
-            self._checkpoint_path,
-            weights_only=True,
-            map_location="cpu",
-            mmap=True,
-        )
+        checkpoint = _load_checkpoint(self._checkpoint_path)
 
         if not isinstance(checkpoint, Mapping):
             logger.error(
@@ -33,10 +33,10 @@ class PyTorchWeightSource(WeightSource):
             )
             raise TypeError("Expected checkpoint to be a mapping of tensors.")
 
-        typed_checkpoint = cast(Mapping[str, object], checkpoint)
-        logger.info(
-            "Starting streaming for checkpoint %s.", self._checkpoint_path
+        typed_checkpoint = _extract_state_dict(
+            cast(Mapping[str, object], checkpoint)
         )
+        logger.info("Starting streaming for checkpoint %s.", self._checkpoint_path)
         layer_count = 0
 
         try:
@@ -52,8 +52,7 @@ class PyTorchWeightSource(WeightSource):
                     )
                     continue
 
-                materialized = tensor.detach().cpu().contiguous()
-                values = materialized.reshape(-1).float().numpy()
+                values = tensor_to_numpy(tensor)
                 layer_count += 1
                 logger.debug(
                     "Yielding layer %s shape=%s dtype=%s param_count=%d.",
