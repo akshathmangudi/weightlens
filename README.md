@@ -20,7 +20,12 @@ Weightlens is an analysis tool for checkpoint weights.
 | ~ 1.5GB | ~ 16 seconds | 
 
 ## To use
-Simply run `pip install weightlens` into your virtual environment and start by running `lens analyze <filename>.pth`
+Simply run `pip install weightlens` into your virtual environment and start by running:
+
+```bash
+lens analyze <filename>.pth
+lens analyze <dcp_directory> --format dcp
+```
 
 ## Demo: corrupted checkpoints
 Generate a clean checkpoint and two corrupted variants, then compare manual loading
