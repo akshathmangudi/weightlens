@@ -1,3 +1,4 @@
+from .dcp import DCPWeightSource
 from .pytorch import PyTorchWeightSource
 
-__all__ = ["PyTorchWeightSource"]
+__all__ = ["DCPWeightSource", "PyTorchWeightSource"]

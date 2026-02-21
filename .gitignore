@@ -1,7 +1,14 @@
 .venv/
 *.egg-info/
 *.pyc
+__pycache__/
 
 assets/
 docs/
 CLAUDE.md
+scripts/
+
+.vscode/
+.ruff_cache/
+.pytest_cache/
+.mypy_cache/

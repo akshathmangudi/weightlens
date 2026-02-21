@@ -36,7 +36,7 @@ class DeadLayerRule(DiagnosticRule):
                 message=f"dead_fraction={dead_fraction:.6f} >= 0.9999",
                 severity=self.severity,
             )
-            logger.error(
+            logger.debug(
                 "Diagnostic rule %s triggered for %s: %s.",
                 flag.rule,
                 flag.layer,
@@ -84,7 +84,7 @@ class ExplodingVarianceRule(DiagnosticRule):
                 message=f"variance_ratio={ratio:.3f} >= 10.0",
                 severity=self.severity,
             )
-            logger.warning(
+            logger.debug(
                 "Diagnostic rule %s triggered for %s: %s.",
                 flag.rule,
                 flag.layer,
@@ -133,7 +133,7 @@ class ExtremeSpikeRule(DiagnosticRule):
                 message=f"spike_ratio={ratio:.3f} >= 100.0",
                 severity=self.severity,
             )
-            logger.error(
+            logger.debug(
                 "Diagnostic rule %s triggered for %s: %s.",
                 flag.rule,
                 flag.layer,
@@ -184,7 +184,7 @@ class AbnormalNormRule(DiagnosticRule):
                 message=f"norm_z_score={z_score:.3f} exceeds +/-5.0",
                 severity=self.severity,
             )
-            logger.warning(
+            logger.debug(
                 "Diagnostic rule %s triggered for %s: %s.",
                 flag.rule,
                 flag.layer,

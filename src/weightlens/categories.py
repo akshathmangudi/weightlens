@@ -10,9 +10,10 @@ ParameterCategory = Literal[
     "embedding",
     "buffer",
     "adapter",
+    "optimizer",
     "skip",
 ]
 
 ALL_DIAGNOSTIC_CATEGORIES: frozenset[ParameterCategory] = frozenset(
     ["kernel", "bias", "norm_scale", "norm_shift", "embedding", "buffer", "adapter"]
-)  # everything except "skip"
+)  # everything except "skip" and "optimizer"
