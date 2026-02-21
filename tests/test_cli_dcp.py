@@ -97,6 +97,22 @@ def test_directory_without_metadata(tmp_path: Path) -> None:
     assert "metadata" in output.lower()
 
 
+def test_include_optimizer_flag(tmp_path: Path) -> None:
+    """The --include-optimizer flag is accepted and analysis succeeds."""
+    state = {"model.weight": torch.randn(16, 16)}
+    _save_dcp(tmp_path / "ckpt", state)
+    console = _make_console()
+
+    exit_code = run_cli(
+        ["analyze", str(tmp_path / "ckpt"), "--format", "dcp", "--include-optimizer"],
+        console=console,
+    )
+
+    output = console.export_text()
+    assert exit_code == 0
+    assert "EXPERIMENTAL" in output
+
+
 def test_dcp_not_loadable_shows_health(tmp_path: Path) -> None:
     """A DCP directory with missing shard shows health table and aborts."""
     state = {"w": torch.randn(8, 8)}

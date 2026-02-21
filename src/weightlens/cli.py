@@ -11,7 +11,7 @@ from rich.table import Table
 
 from weightlens.aggregators import StreamingGlobalAggregator
 from weightlens.analyzer import Analyzer
-from weightlens.classifiers import PyTorchParameterClassifier
+from weightlens.classifiers import DCPParameterClassifier, PyTorchParameterClassifier
 from weightlens.contracts import CheckpointValidator
 from weightlens.diagnostics import (
     AbnormalNormRule,
@@ -53,6 +53,12 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=["pytorch", "dcp", "auto"],
         default="auto",
         help="Checkpoint format (default: auto-detect)",
+    )
+    analyze.add_argument(
+        "--include-optimizer",
+        action="store_true",
+        default=False,
+        help="Include optimizer state tensors in DCP analysis (default: skip them)",
     )
     return parser
 
@@ -126,7 +132,12 @@ def _run_analyze_pytorch(checkpoint_path: Path, *, console: Console) -> int:
     return 0
 
 
-def _run_analyze_dcp(checkpoint_path: Path, *, console: Console) -> int:
+def _run_analyze_dcp(
+    checkpoint_path: Path,
+    *,
+    console: Console,
+    include_optimizer: bool = False,
+) -> int:
     from weightlens.sources.dcp import DCPWeightSource
     from weightlens.validators.dcp_checkpoint import DCPCheckpointValidator
 
@@ -160,7 +171,9 @@ def _run_analyze_dcp(checkpoint_path: Path, *, console: Console) -> int:
                 ExtremeSpikeRule(),
                 AbnormalNormRule(),
             ],
-            classifier=PyTorchParameterClassifier(),
+            classifier=DCPParameterClassifier(
+                include_optimizer=include_optimizer
+            ),
         )
         result = analyzer.analyze()
 
@@ -170,7 +183,11 @@ def _run_analyze_dcp(checkpoint_path: Path, *, console: Console) -> int:
 
 
 def _run_analyze(
-    checkpoint_path: Path, *, fmt: str = "auto", console: Console | None
+    checkpoint_path: Path,
+    *,
+    fmt: str = "auto",
+    include_optimizer: bool = False,
+    console: Console | None,
 ) -> int:
     out_console = console or Console()
 
@@ -184,7 +201,11 @@ def _run_analyze(
         resolved_fmt = fmt
 
     if resolved_fmt == "dcp":
-        return _run_analyze_dcp(checkpoint_path, console=out_console)
+        return _run_analyze_dcp(
+            checkpoint_path,
+            console=out_console,
+            include_optimizer=include_optimizer,
+        )
     return _run_analyze_pytorch(checkpoint_path, console=out_console)
 
 
@@ -196,7 +217,10 @@ def run_cli(
     args = parser.parse_args(argv)
     if args.command == "analyze":
         return _run_analyze(
-            Path(args.checkpoint), fmt=args.format, console=console
+            Path(args.checkpoint),
+            fmt=args.format,
+            include_optimizer=args.include_optimizer,
+            console=console,
         )
     parser.error("Unknown command.")
     return 2

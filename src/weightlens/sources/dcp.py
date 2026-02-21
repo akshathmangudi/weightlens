@@ -199,7 +199,7 @@ class DCPWeightSource(WeightSource):
                     del chunk_t
 
             materialized = tensor.detach().cpu().contiguous()
-            values = materialized.reshape(-1).numpy()
+            values = materialized.reshape(-1).float().numpy()
             layer_count += 1
             logger.debug(
                 "Yielding layer %s shape=%s dtype=%s param_count=%d.",
