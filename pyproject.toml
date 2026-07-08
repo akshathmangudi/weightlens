@@ -35,6 +35,7 @@ dev = [
     "mypy>=1.8",
     "pyright>=1.1",
     "fsspec>=2024.6.0",
+    "safetensors>=0.4.0",
 ]
 
 [tool.setuptools.packages.find]

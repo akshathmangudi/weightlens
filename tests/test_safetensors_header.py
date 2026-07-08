@@ -31,17 +31,17 @@ def _build_st(tensors: dict[str, np.ndarray]) -> bytes:
     return struct.pack("<Q", len(hjson)) + hjson + body
 
 
-def test_read_header_len_roundtrips():
+def test_read_header_len_roundtrips() -> None:
     prefix = struct.pack("<Q", 1234)
     assert read_header_len(prefix) == 1234
 
 
-def test_read_header_len_rejects_truncated():
+def test_read_header_len_rejects_truncated() -> None:
     with pytest.raises(ValueError):
         read_header_len(b"\x00\x00")
 
 
-def test_parse_header_extracts_slices():
+def test_parse_header_extracts_slices() -> None:
     a = np.arange(6, dtype=np.float32).reshape(2, 3)
     blob = _build_st({"a.weight": a})
     header_len = read_header_len(blob[:HEADER_LEN_BYTES])
@@ -56,7 +56,7 @@ def test_parse_header_extracts_slices():
     assert offset == HEADER_LEN_BYTES + header_len  # first tensor at base
 
 
-def test_parse_header_skips_metadata_key():
+def test_parse_header_skips_metadata_key() -> None:
     a = np.ones(4, dtype=np.float32)
     blob = bytearray(_build_st({"a": a}))
     # Manually inject __metadata__ into the header
@@ -76,7 +76,7 @@ def test_parse_header_skips_metadata_key():
     assert "a" in slices  # real tensor should still be present
 
 
-def test_decode_float_tensor_roundtrips_f32():
+def test_decode_float_tensor_roundtrips_f32() -> None:
     a = np.linspace(-1, 1, 12, dtype=np.float32).reshape(3, 4)
     blob = _build_st({"w": a})
     header_len = read_header_len(blob[:HEADER_LEN_BYTES])
@@ -88,7 +88,7 @@ def test_decode_float_tensor_roundtrips_f32():
     assert np.array_equal(decoded, a)
 
 
-def test_decode_bf16_upcasts_to_float32():
+def test_decode_bf16_upcasts_to_float32() -> None:
     # bf16 = top 16 bits of float32. Build raw bf16 bytes from known floats.
     import struct as _s
 

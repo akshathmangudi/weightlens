@@ -13,7 +13,7 @@ def _write_memory(path: str, data: bytes) -> None:
         f.write(data)
 
 
-def test_uri_helpers():
+def test_uri_helpers() -> None:
     assert split_protocol("s3://b/k") == "s3"
     assert split_protocol("/local/x") is None
     assert is_remote("s3://b/k") is True
@@ -23,7 +23,7 @@ def test_uri_helpers():
     assert parent_uri("s3://b/dir/model.index.json") == "s3://b/dir"
 
 
-def test_byte_range_reads_exact_slice_over_memory():
+def test_byte_range_reads_exact_slice_over_memory() -> None:
     data = bytes(range(256))
     _write_memory("memory://blob.bin", data)
     reader = ByteRangeReader("memory://blob.bin")
@@ -33,21 +33,21 @@ def test_byte_range_reads_exact_slice_over_memory():
     assert reader.read(0, 0) == b""
 
 
-def test_byte_range_rejects_negative():
+def test_byte_range_rejects_negative() -> None:
     _write_memory("memory://blob2.bin", b"abc")
     reader = ByteRangeReader("memory://blob2.bin")
     with pytest.raises(ValueError):
         reader.read(-1, 2)
 
 
-def test_missing_backend_message_names_extra(monkeypatch):
+def test_missing_backend_message_names_extra(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # Simulate s3fs not installed: url_to_fs raises ImportError for s3://.
-    import weightlens.io.byte_range as brmod
-
-    def _boom(uri: str):
+    def _boom(uri: str) -> None:
         raise ImportError("no s3fs")
 
-    monkeypatch.setattr(brmod.fsspec.core, "url_to_fs", _boom)
+    monkeypatch.setattr("weightlens.io.byte_range.fsspec.core.url_to_fs", _boom)
     with pytest.raises(MissingBackendError) as exc:
         ByteRangeReader("s3://bucket/key")
     assert "weightlens[s3]" in str(exc.value)
