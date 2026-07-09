@@ -26,11 +26,17 @@ class SafetensorsWeightSource(WeightSource):
     fetched by byte-range, decoded, yielded, then released before the next.
     """
 
-    def __init__(self, uri: str) -> None:
+    def __init__(
+        self, uri: str, storage_options: dict[str, object] | None = None
+    ) -> None:
         self._uri = uri
+        self._storage_options = storage_options
 
     def _is_index(self) -> bool:
         return self._uri.endswith(".index.json")
+
+    def _reader(self, uri: str) -> ByteRangeReader:
+        return ByteRangeReader(uri, self._storage_options)
 
     @staticmethod
     def _load_header(reader: ByteRangeReader) -> tuple[int, dict[str, TensorSlice]]:
@@ -57,14 +63,13 @@ class SafetensorsWeightSource(WeightSource):
             )
 
     def _iter_single(self, uri: str) -> Iterator[LayerTensor]:
-        yield from self._stream_reader(ByteRangeReader(uri), wanted=None)
+        yield from self._stream_reader(self._reader(uri), wanted=None)
 
     def _iter_sharded(self) -> Iterator[LayerTensor]:
-        index_reader = ByteRangeReader(self._uri)
+        index_reader = self._reader(self._uri)
         weight_map = parse_index(index_reader.read(0, index_reader.size()))
         base = parent_uri(self._uri)
 
-        # Group tensors by shard, preserving first-seen shard order.
         shards: dict[str, list[str]] = {}
         for tensor_name, shard_file in weight_map.items():
             shards.setdefault(shard_file, []).append(tensor_name)
@@ -74,8 +79,9 @@ class SafetensorsWeightSource(WeightSource):
             logger.info(
                 "Streaming shard %s (%d tensors).", shard_file, len(tensor_names)
             )
-            reader = ByteRangeReader(shard_uri)
-            yield from self._stream_reader(reader, wanted=set(tensor_names))
+            yield from self._stream_reader(
+                self._reader(shard_uri), wanted=set(tensor_names)
+            )
 
     def iter_layers(self) -> Iterator[LayerTensor]:
         if self._is_index():

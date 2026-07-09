@@ -22,8 +22,14 @@ logger = logging.getLogger(__name__)
 class SafetensorsCheckpointValidator(CheckpointValidator):
     """Validate a safetensors checkpoint using only its header(s)."""
 
-    def __init__(self, uri: str) -> None:
+    def __init__(
+        self, uri: str, storage_options: dict[str, object] | None = None
+    ) -> None:
         self._uri = uri
+        self._storage_options = storage_options
+
+    def _reader(self, uri: str) -> ByteRangeReader:
+        return ByteRangeReader(uri, self._storage_options)
 
     @staticmethod
     def _header(reader: ByteRangeReader) -> tuple[int, dict[str, TensorSlice]]:
@@ -44,7 +50,7 @@ class SafetensorsCheckpointValidator(CheckpointValidator):
                 )
 
     def _validate_single(self, uri: str) -> tuple[int, int, int]:
-        reader = ByteRangeReader(uri)
+        reader = self._reader(uri)
         size = reader.size()
         header_len, slices = self._header(reader)
         self._check_offsets(header_len, slices, size)
@@ -53,13 +59,13 @@ class SafetensorsCheckpointValidator(CheckpointValidator):
         return size, len(floats), params
 
     def _validate_sharded(self) -> tuple[int, int, int]:
-        index_reader = ByteRangeReader(self._uri)
+        index_reader = self._reader(self._uri)
         weight_map = parse_index(index_reader.read(0, index_reader.size()))
         base = parent_uri(self._uri)
         shard_files = sorted(set(weight_map.values()))
         size = count = params = 0
         for shard_file in shard_files:
-            reader = ByteRangeReader(join_uri(base, shard_file))
+            reader = self._reader(join_uri(base, shard_file))
             shard_size = reader.size()
             header_len, slices = self._header(reader)
             self._check_offsets(header_len, slices, shard_size)
@@ -75,10 +81,10 @@ class SafetensorsCheckpointValidator(CheckpointValidator):
                 size, count, params = self._validate_sharded()
             else:
                 size, count, params = self._validate_single(self._uri)
-        except (FileNotFoundError, MissingBackendError):
-            # A genuinely missing file, or an uninstalled remote backend, must
-            # propagate (the CLI maps MissingBackendError to a distinct exit
-            # code + install hint) rather than be misreported as corruption.
+        except (FileNotFoundError, MissingBackendError, PermissionError):
+            # Missing file, uninstalled backend, or an auth failure must
+            # propagate so the CLI can map each to a distinct exit code and
+            # message, rather than being misreported as corruption.
             raise
         except Exception as exc:  # unparseable header / bad index
             logger.error("Safetensors validation failed: %s", exc)

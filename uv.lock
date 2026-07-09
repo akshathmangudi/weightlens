@@ -2838,6 +2838,7 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "fsspec" },
+    { name = "gcsfs" },
     { name = "moto", extra = ["server"] },
     { name = "mypy" },
     { name = "pyright" },
@@ -2864,6 +2865,7 @@ requires-dist = [
     { name = "fsspec", marker = "extra == 'gcs'", specifier = ">=2024.6.0" },
     { name = "fsspec", marker = "extra == 'remote'", specifier = ">=2024.6.0" },
     { name = "fsspec", marker = "extra == 's3'", specifier = ">=2024.6.0" },
+    { name = "gcsfs", marker = "extra == 'dev'", specifier = ">=2024.6.0" },
     { name = "gcsfs", marker = "extra == 'gcs'", specifier = ">=2024.6.0" },
     { name = "moto", extras = ["server"], marker = "extra == 'dev'", specifier = ">=5.0.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.8" },

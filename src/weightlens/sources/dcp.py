@@ -120,7 +120,7 @@ def read_metadata(checkpoint_dir: str | Path) -> Any:
 class DCPWeightSource(WeightSource):
     """Stream DCP (Distributed Checkpoint) directories as LayerTensor objects.
 
-    **EXPERIMENTAL** — reads one tensor at a time using direct byte-offset
+    **EXPERIMENTAL**: reads one tensor at a time using direct byte-offset
     reads from shard files.  Memory usage is bounded by the size of the
     largest single tensor, not the total checkpoint size.
     """

@@ -12,13 +12,11 @@ except ImportError:  # pragma: no cover - exercised via monkeypatch/uninstalled 
 
 
 class ByteRangeReader:
-    """Read exact byte ranges from any fsspec-supported storage.
+    """Read exact byte ranges from any fsspec-supported storage backend."""
 
-    Local paths, ``file://``, ``s3://``, ``gs://`` and ``memory://`` all flow
-    through one code path. Only the requested bytes cross the network.
-    """
-
-    def __init__(self, uri: str) -> None:
+    def __init__(
+        self, uri: str, storage_options: dict[str, object] | None = None
+    ) -> None:
         self.uri = uri
         if fsspec is None:
             raise MissingBackendError(
@@ -26,7 +24,7 @@ class ByteRangeReader:
                 "Install it with: pip install weightlens[remote]"
             )
         try:
-            fs, path = fsspec.core.url_to_fs(uri)
+            fs, path = fsspec.core.url_to_fs(uri, **(storage_options or {}))
         except ImportError as exc:  # backend (s3fs/gcsfs) missing
             raise MissingBackendError(
                 "Reading this URI needs an extra backend. "

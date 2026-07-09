@@ -23,16 +23,9 @@ from weightlens.sources.safetensors import SafetensorsWeightSource
 from weightlens.stats_engines import BasicStatsEngine
 from weightlens.validators.safetensors import SafetensorsCheckpointValidator
 
-# Adversarial golden-oracle suite: streamed analysis == full-local-load analysis.
-#
-# The spec's headline correctness oracle is that WeightLens's streaming
-# map-reduce pipeline over safetensors checkpoints must produce numerically
-# identical results to a naive "load everything with
-# ``safetensors.numpy.load_file`` and crunch with plain numpy" implementation.
-# This module builds realistic multi-tensor and multi-shard synthetic
-# checkpoints, runs them through the *exact* component wiring used by
-# ``weightlens.cli._run_analyze_safetensors``, and cross-checks every
-# reported number against an independent numpy oracle.
+# Golden-oracle suite: streamed analysis == full-local-load analysis.
+# Tests that streaming map-reduce pipeline produces numerically identical
+# results to naive "load everything + crunch with plain numpy" approach.
 
 MEAN_STD_RTOL = 1e-5
 MEAN_STD_ATOL = 1e-8
@@ -41,11 +34,7 @@ LAYER_FIELD_ATOL = 1e-8
 
 
 class _StaticValidator(CheckpointValidator):
-    """CheckpointValidator that reuses a precomputed health result.
-
-    Mirrors ``weightlens.cli.StaticCheckpointValidator`` locally so this file
-    does not need to import a CLI-private symbol.
-    """
+    """CheckpointValidator that reuses a precomputed health result."""
 
     def __init__(self, health: CheckpointHealth) -> None:
         self._health = health
@@ -80,7 +69,7 @@ def _run_full_analysis(uri: str, *, num_workers: int | None = 1) -> AnalysisResu
 
 def _oracle_layer_stats(name: str, values: np.ndarray) -> dict[str, float]:
     """Compute per-layer stats independently with plain numpy."""
-    _ = name  # kept for call-site readability; stats are purely numeric
+    _ = name
     flat = values.astype(np.float64).ravel()
     count = flat.size
     mean = float(np.mean(flat))
@@ -132,7 +121,6 @@ def _assert_layer_matches_oracle(layer: LayerStats, oracle: dict[str, float]) ->
         assert math.isclose(
             got, want, rel_tol=LAYER_FIELD_RTOL, abs_tol=LAYER_FIELD_ATOL
         ), f"{layer.name}.{field}: streamed={got!r} oracle={want!r}"
-    # Sparsity is an exact rational (nonzero_count / count); no tolerance needed.
     assert layer.sparsity == pytest.approx(oracle["sparsity"], abs=1e-12)
 
 
@@ -320,13 +308,6 @@ def test_sparse_layer_with_exact_zeros_matches_oracle(tmp_path: Path) -> None:
 
 
 def test_bf16_tensor_matches_upcast_oracle(tmp_path: Path) -> None:
-    """BF16 tensors are upcast to float32 on read; oracle must upcast too.
-
-    ``safetensors.numpy.load_file`` cannot represent bf16 natively, so this
-    test writes bf16 via torch directly and compares against a manual
-    numpy-side upcast oracle (same algorithm the source uses: pad the 16-bit
-    mantissa/exponent word into the high half of a float32).
-    """
     torch = pytest.importorskip("torch")
     from safetensors.torch import save_file
 
@@ -347,9 +328,6 @@ def test_bf16_tensor_matches_upcast_oracle(tmp_path: Path) -> None:
 
 
 def test_global_stats_reflects_full_checkpoint_not_partial(tmp_path: Path) -> None:
-    """Regression guard: dropping any single tensor from the oracle
-    concatenation must break the match (proves the oracle actually depends
-    on every tensor, and that streaming aggregates every tensor too)."""
     tensors = _make_realistic_tensors(seed=7)
     path = str(tmp_path / "model.safetensors")
     write_single(path, tensors)
@@ -363,9 +341,6 @@ def test_global_stats_reflects_full_checkpoint_not_partial(tmp_path: Path) -> No
         rel_tol=MEAN_STD_RTOL,
         abs_tol=MEAN_STD_ATOL,
     )
-
-    # Oracle over all-but-one tensor should generally disagree with the
-    # streamed global mean (sanity check that our oracle is sensitive).
     names = list(tensors)
     partial_values = [tensors[n] for n in names[1:]]
     partial_mean, _ = _oracle_global_mean_std(partial_values)
@@ -375,8 +350,6 @@ def test_global_stats_reflects_full_checkpoint_not_partial(tmp_path: Path) -> No
 
 
 def test_layer_count_and_total_params_match_oracle(tmp_path: Path) -> None:
-    """CheckpointHealth totals (tensor_count/total_params) must equal the
-    oracle load's tensor count and total element count."""
     tensors = _make_realistic_tensors(seed=8)
     path = str(tmp_path / "model.safetensors")
     write_single(path, tensors)
@@ -394,8 +367,6 @@ def test_layer_count_and_total_params_match_oracle(tmp_path: Path) -> None:
 
 
 def test_many_small_shards_global_stats_match_oracle(tmp_path: Path) -> None:
-    """FSDP-like pathological sharding (one tensor per shard) must still
-    reduce to the exact same global stats as a single concatenated oracle."""
     rng = np.random.default_rng(9)
     shards: list[dict[str, np.ndarray]] = [
         {f"layers.{i}.weight": rng.normal(i, 1.0, size=(8, 8)).astype(np.float32)}

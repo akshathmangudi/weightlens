@@ -105,9 +105,9 @@ class RichReporter(Reporter):
 
         for flag in diagnostics_list:
             severity_style = "red bold" if flag.severity == "error" else "yellow"
-            # Wrap in Text() so checkpoint-controlled strings (esp. flag.layer,
-            # a raw tensor name) are rendered literally — a bare str is parsed
-            # as Rich markup and any [bracketed] substring is silently dropped.
+            # Wrap in Text() so checkpoint-controlled strings are rendered
+            # literally. A bare str is parsed as Rich markup; [bracketed]
+            # substrings are silently dropped.
             table.add_row(
                 Text(flag.severity, style=severity_style),
                 Text(flag.rule),

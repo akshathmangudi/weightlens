@@ -41,6 +41,7 @@ dev = [
     "safetensors>=0.4.0",
     "moto[server]>=5.0.0",
     "s3fs>=2024.6.0",
+    "gcsfs>=2024.6.0",
 ]
 
 [tool.setuptools.packages.find]

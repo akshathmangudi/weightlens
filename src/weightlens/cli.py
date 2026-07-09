@@ -22,7 +22,7 @@ from weightlens.diagnostics import (
 )
 from weightlens.io import materialize
 from weightlens.io.errors import MissingBackendError
-from weightlens.io.uri import is_remote
+from weightlens.io.uri import anon_storage_options, is_remote
 from weightlens.models import CheckpointHealth
 from weightlens.reporters import RichReporter
 from weightlens.sources import PyTorchWeightSource
@@ -30,6 +30,8 @@ from weightlens.sources.safetensors import SafetensorsWeightSource
 from weightlens.stats_engines import BasicStatsEngine
 from weightlens.validators import PyTorchCheckpointValidator
 from weightlens.validators.safetensors import SafetensorsCheckpointValidator
+
+logger = logging.getLogger(__name__)
 
 
 class StaticCheckpointValidator(CheckpointValidator):
@@ -71,6 +73,12 @@ def _build_parser() -> argparse.ArgumentParser:
         type=str,
         default="1",
         help="Number of parallel stats workers ('auto' or integer, default: 1)",
+    )
+    analyze.add_argument(
+        "--anon",
+        action="store_true",
+        default=False,
+        help="Use anonymous access for remote reads (public buckets)",
     )
     return parser
 
@@ -229,8 +237,9 @@ def _run_analyze_safetensors(
     *,
     console: Console,
     num_workers: int | None = None,
+    storage_options: dict[str, object] | None = None,
 ) -> int:
-    validator = SafetensorsCheckpointValidator(uri)
+    validator = SafetensorsCheckpointValidator(uri, storage_options)
     try:
         health = validator.validate()
     except FileNotFoundError:
@@ -243,7 +252,7 @@ def _run_analyze_safetensors(
         return 1
 
     analyzer = Analyzer(
-        source=SafetensorsWeightSource(uri),
+        source=SafetensorsWeightSource(uri, storage_options),
         validator=StaticCheckpointValidator(health),
         stats_engine=BasicStatsEngine(),
         aggregator=StreamingGlobalAggregator(),
@@ -267,15 +276,20 @@ def _run_analyze(
     fmt: str = "auto",
     include_optimizer: bool = False,
     num_workers: int | None = None,
+    anon: bool = False,
     console: Console | None,
 ) -> int:
     out_console = console or Console()
+    storage_options = anon_storage_options(target) if anon else None
     try:
         resolved_fmt = _detect_format_target(target) if fmt == "auto" else fmt
 
         if resolved_fmt == "safetensors":
             return _run_analyze_safetensors(
-                target, console=out_console, num_workers=num_workers
+                target,
+                console=out_console,
+                num_workers=num_workers,
+                storage_options=storage_options,
             )
         if resolved_fmt == "dcp":
             return _run_analyze_dcp(
@@ -284,17 +298,35 @@ def _run_analyze(
                 include_optimizer=include_optimizer,
                 num_workers=num_workers,
             )
-        # pytorch: materialize if remote, then analyze locally.
-        local_path = materialize(target) if is_remote(target) else Path(target)
+        local_path = (
+            materialize(target, storage_options) if is_remote(target)
+            else Path(target)
+        )
         return _run_analyze_pytorch(
             local_path, console=out_console, num_workers=num_workers
         )
     except MissingBackendError as exc:
         out_console.print(f"[red]{escape(str(exc))}[/red]")
         return 3
+    except PermissionError:
+        out_console.print(
+            f"[red]Authentication failed for {escape(target)}.[/red]\n"
+            "Configure credentials the standard way (AWS: aws configure, "
+            "AWS_* env vars, or an IAM role; GCS: gcloud auth "
+            "application-default login or GOOGLE_APPLICATION_CREDENTIALS), "
+            "or pass --anon for public buckets."
+        )
+        return 4
     except (FileNotFoundError, ValueError) as exc:
         out_console.print(escape(str(exc)))
         return 2
+    except Exception as exc:  # never crash the CLI with a traceback
+        logger.debug("Unexpected error analyzing %s", target, exc_info=True)
+        out_console.print(
+            f"[red]Unexpected error analyzing {escape(target)}: "
+            f"{escape(str(exc))}[/red]"
+        )
+        return 1
 
 
 def run_cli(
@@ -309,6 +341,7 @@ def run_cli(
             fmt=args.format,
             include_optimizer=args.include_optimizer,
             num_workers=_parse_num_workers(args.num_workers),
+            anon=args.anon,
             console=console,
         )
     parser.error("Unknown command.")

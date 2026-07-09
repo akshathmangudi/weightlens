@@ -5,7 +5,13 @@ import pytest
 
 from weightlens.io.byte_range import ByteRangeReader
 from weightlens.io.errors import MissingBackendError
-from weightlens.io.uri import is_remote, join_uri, parent_uri, split_protocol
+from weightlens.io.uri import (
+    anon_storage_options,
+    is_remote,
+    join_uri,
+    parent_uri,
+    split_protocol,
+)
 
 
 def _write_memory(path: str, data: bytes) -> None:
@@ -20,10 +26,17 @@ def test_uri_helpers() -> None:
     assert is_remote("/local/x") is False
     assert is_remote("file:///local/x") is False
     assert join_uri("s3://b/dir", "shard.st") == "s3://b/dir/shard.st"
-    # Empty base (bare relative index filename) -> relative sibling, not "/name".
     assert join_uri("", "shard.st") == "shard.st"
     assert parent_uri("s3://b/dir/model.index.json") == "s3://b/dir"
     assert parent_uri("model.safetensors.index.json") == ""
+
+
+def test_anon_storage_options() -> None:
+    assert anon_storage_options("s3://b/k") == {"anon": True}
+    assert anon_storage_options("gs://b/k") == {"token": "anon"}
+    assert anon_storage_options("gcs://b/k") == {"token": "anon"}
+    assert anon_storage_options("/local/path") == {}
+    assert anon_storage_options("file:///local/path") == {}
 
 
 def test_byte_range_reads_exact_slice_over_memory() -> None:

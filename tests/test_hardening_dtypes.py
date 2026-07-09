@@ -142,7 +142,7 @@ def test_denormals_survive_streaming(
 
 
 # ---------------------------------------------------------------------------
-# Shape edges: scalar (), 0-element, 3-D — across F16/F32/F64.
+# Shape edges: scalar (), 0-element, 3-D across F16/F32/F64.
 # ---------------------------------------------------------------------------
 
 

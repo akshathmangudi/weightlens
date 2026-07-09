@@ -14,7 +14,7 @@ _METADATA_FILENAMES = (".metadata", "metadata")
 class DCPCheckpointValidator(CheckpointValidator):
     """Validate DCP (Distributed Checkpoint) directory integrity.
 
-    **EXPERIMENTAL** — performs metadata-only validation without loading
+    **EXPERIMENTAL**: performs metadata-only validation without loading
     tensor data.  NaN / zero-flood detection is handled by the analysis
     pipeline (``BasicStatsEngine``, ``DeadLayerRule``, ``ExtremeSpikeRule``).
     """
@@ -89,7 +89,7 @@ class DCPCheckpointValidator(CheckpointValidator):
                 corruption_flags=corruption_flags,
             )
 
-        # Phase 4: shard file scan — flag zero-byte shards
+        # Phase 4: shard file scan, flag zero-byte shards
         shard_files = list(self._checkpoint_dir.glob("*.distcp"))
         for shard in shard_files:
             if shard.stat().st_size == 0:

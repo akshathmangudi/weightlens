@@ -51,10 +51,6 @@ def test_cli_analyzes_sharded_safetensors(tmp_path: Path) -> None:
 
 
 def test_cli_missing_backend_returns_3(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Simulate the s3fs backend being absent by making fsspec's url_to_fs raise
-    # ImportError. This drives the REAL path (ByteRangeReader -> MissingBackendError
-    # -> validate() -> CLI), verifying the error propagates to the exit-3 install
-    # hint instead of being swallowed and misreported as a corrupt checkpoint.
     def _no_backend(uri: str) -> object:
         raise ImportError("no s3fs installed")
 

@@ -20,9 +20,6 @@ def extra_for_uri(uri: str) -> str:
 
 
 def join_uri(base_uri: str, name: str) -> str:
-    # Empty base (a bare relative index filename, e.g. "model.index.json" with
-    # no directory) must yield a relative sibling name, not "/name" which would
-    # (wrongly) resolve shards against the filesystem root.
     if not base_uri:
         return name
     return base_uri.rstrip("/") + "/" + name.lstrip("/")
@@ -30,3 +27,16 @@ def join_uri(base_uri: str, name: str) -> str:
 
 def parent_uri(uri: str) -> str:
     return uri.rsplit("/", 1)[0] if "/" in uri else ""
+
+
+def anon_storage_options(uri: str) -> dict[str, object]:
+    """Return the fsspec storage option that requests anonymous access.
+
+    Each backend spells it differently; local paths need nothing.
+    """
+    proto = split_protocol(uri)
+    if proto == "s3":
+        return {"anon": True}
+    if proto in ("gs", "gcs"):
+        return {"token": "anon"}
+    return {}

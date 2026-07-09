@@ -15,7 +15,7 @@ _NP_LE = {"F16": "<f2", "F32": "<f4", "F64": "<f8"}
 
 @dataclass(frozen=True)
 class TensorSlice:
-    """Location + type of one tensor within a safetensors byte buffer."""
+    """Location and type of one tensor within a safetensors byte buffer."""
 
     name: str
     dtype: str

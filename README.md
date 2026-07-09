@@ -1,15 +1,15 @@
 # weightlens
-Weightlens is an analysis tool for checkpoint weights. 
+Weightlens is an analysis tool for checkpoint weights.
 
 ## What it solves
-- Corruption detection (empty / partial failures, tensor access failures and NaN/zero floods) 
+- Corruption detection (empty / partial failures, tensor access failures and NaN/zero floods)
 - Per-layer metrics (mean, std, min/max, L2 norm, sparsity and p99 absolute)
-- Global distribution stats which are streamed to prevent OOM and memory crashes. 
-- deterministic diagnostics for unhealthy layers. 
+- Global distribution stats, streamed to avoid OOM and memory crashes.
+- Deterministic diagnostics for unhealthy layers.
 
 ## What's next?
 - [x] Improve diagnostics by bucketing components and softening constraints (bias, weights, norm_params, etc.)
-- [ ] Integrate checkpoint diffing - compare regressions, drift, and training failures between two or more checkpoints
+- [ ] Integrate checkpoint diffing: compare regressions, drift, and training failures between two or more checkpoints
 - [ ] Extend Weightlens for `h5`, `safetensors`, `joblib`, etc. (DCP has been covered from a user request.)
 - [ ] Research on deeper failure modes and detecting them accurately.
 
@@ -35,7 +35,7 @@ lens analyze <checkpoint>.pth --num-workers 2
 
 ## Remote checkpoints (safetensors)
 
-Analyze checkpoints straight from object storage — only tensor bytes are fetched, nothing is downloaded or consolidated:
+Analyze checkpoints straight from object storage. Only tensor bytes are fetched, nothing is downloaded or consolidated:
 
 ```bash
 pip install weightlens[s3]     # or [gcs], or [remote] for local fsspec only
@@ -45,7 +45,7 @@ lens analyze s3://bucket/model.safetensors.index.json   # sharded
 lens analyze gs://bucket/model.safetensors
 ```
 
-Credentials use your existing AWS/GCS credential chain (env vars, `~/.aws/…`, instance roles) — Weightlens stores no secrets. Remote `.pth` is supported via download-to-cache (`.pth` cannot be byte-ranged).
+Credentials use your existing AWS/GCS credential chain (env vars, `~/.aws/...`, instance roles). Weightlens stores no secrets. Remote `.pth` is supported via download-to-cache (`.pth` cannot be byte-ranged).
 
 ## Demo: corrupted checkpoints
 Generate a clean checkpoint and two corrupted variants, then compare manual loading
@@ -62,17 +62,13 @@ lens analyze demo/checkpoints/corrupted_spike.pth
 
 If `lens` is not on your PATH, use `python -m weightlens.cli analyze ...` instead.
 
-## Status
-ALL TESTS AND LINT CHECKS PASS.
-
 ## Contributing
-1. **Step 0**: Clone this repo. 
-2. **Step 1**: Setup a virtual environment of your choice. The standard is uv as a `requirements.txt` does not exist here. 
-3. **Step 2**: Run `uv pip install -e .[dev]` 
-4. **Step 3**: Start contributing! 
+1. Clone this repo.
+2. Set up a virtual environment. The standard is uv (no `requirements.txt`).
+3. Run `uv pip install -e .[dev]`
+4. Start contributing.
 
-If you would like to contribute, please do create Pull Requests. 
+If you would like to contribute, please do create Pull Requests.
 
 ## Final Notes
-This was a weekend project to work on, but it solves a real frustration by shedding some light onto how model 
-checkpoints fail all the time. This library is NOT perfect. I will work on it!
+This library is not perfect and is actively developed.

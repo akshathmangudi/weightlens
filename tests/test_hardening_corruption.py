@@ -1,24 +1,11 @@
-"""Adversarial tests: corruption & truncation resilience of the safetensors
-reader + validator.
+"""Adversarial tests: corruption and truncation resilience.
 
-Covers, by hand-crafted malformed bytes (struct.pack + json, no real
-safetensors writer involved):
+Covers hand-crafted malformed bytes: file too short, oversized header,
+invalid JSON header, data_offsets past EOF, empty file, truncated payload.
 
-1. file shorter than the 8-byte length prefix
-2. header-length prefix N larger than the actual file
-3. header bytes that are not valid JSON
-4. a tensor's data_offsets extending past the file size
-5. an empty (0-byte) file
-6. a well-formed header but truncated tensor payload
-
-For every case we assert:
-  * ``SafetensorsCheckpointValidator(...).validate()`` never raises and
-    returns ``loadable=False`` with a non-empty ``corruption_flags`` list
-    (bit-exact where the failure is guaranteed detectable from the header
-    alone).
-  * ``SafetensorsWeightSource(...).iter_layers()`` either raises a clean
-    ``ValueError`` (never a raw ``struct.error``/``KeyError``/``json.
-    JSONDecodeError``) or completes without crashing the process.
+For each case: SafetensorsCheckpointValidator validates without raising
+(loadable=False with corruption_flags), and SafetensorsWeightSource.iter_layers()
+raises clean ValueError or completes without crashing.
 """
 
 from __future__ import annotations

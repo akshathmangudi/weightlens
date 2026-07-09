@@ -24,11 +24,7 @@ from weightlens.validators.safetensors import SafetensorsCheckpointValidator
 
 
 def _write_index(dir_path: str, weight_map: dict[str, str]) -> str:
-    """Hand-build a model.safetensors.index.json with an arbitrary weight_map.
-
-    Unlike ``write_sharded``, this does not create any shard files itself,
-    so callers can reference shards that do (or deliberately do not) exist.
-    """
+    """Hand-build index.json with arbitrary weight_map (no shard files)."""
     index_path = os.path.join(dir_path, "model.safetensors.index.json")
     doc = {"metadata": {"total_size": 0}, "weight_map": weight_map}
     with open(index_path, "w") as f:
@@ -46,15 +42,11 @@ def test_missing_shard_source_raises_file_not_found(tmp_path: Path) -> None:
     ckpt_dir = tmp_path / "ckpt"
     index_path = write_sharded(str(ckpt_dir), [shard_a])
 
-    # Corrupt the index to also point at a shard file that was never written.
     with open(index_path) as f:
         doc = json.load(f)
     doc["weight_map"]["model.layers.1.w"] = "model-00002-of-00002.safetensors"
     with open(index_path, "w") as f:
         json.dump(doc, f)
-
-    missing_shard = ckpt_dir / "model-00002-of-00002.safetensors"
-    assert not missing_shard.exists()
 
     source = SafetensorsWeightSource(index_path)
     with pytest.raises(FileNotFoundError):
@@ -78,11 +70,7 @@ def test_missing_shard_validator_raises_or_degrades(tmp_path: Path) -> None:
     try:
         health = validator.validate()
     except FileNotFoundError:
-        # Acceptable: a clear, well-typed failure rather than a hang/garbage
-        # result.
         return
-    # If it doesn't raise, it must degrade cleanly rather than report a
-    # falsely-healthy checkpoint.
     assert health.loadable is False
     assert health.corruption_flags != []
 
@@ -90,9 +78,6 @@ def test_missing_shard_validator_raises_or_degrades(tmp_path: Path) -> None:
 def test_missing_shard_does_not_hang_and_leaves_no_garbage_state(
     tmp_path: Path,
 ) -> None:
-    """A missing shard must fail fast, not silently yield partial/garbage
-    tensors for the shards that do exist before blowing up.
-    """
     shard_a: dict[str, np.ndarray] = {
         "keep.me": np.arange(6, dtype=np.float32),
     }
@@ -108,9 +93,6 @@ def test_missing_shard_does_not_hang_and_leaves_no_garbage_state(
     with pytest.raises(FileNotFoundError):
         for lt in SafetensorsWeightSource(index_path).iter_layers():
             collected.append(lt.name)
-    # Either nothing was yielded before the failure, or only tensors from
-    # shards that genuinely exist and were fully valid were yielded -- never
-    # a tensor claimed to live in the missing shard.
     assert "gone.w" not in collected
 
 
@@ -143,7 +125,6 @@ def test_many_tensors_into_two_shards_bit_exact(tmp_path: Path) -> None:
 
 
 def test_few_tensors_into_many_shards_bit_exact(tmp_path: Path) -> None:
-    # One tensor per shard, 30 shards -- inverse cardinality of the above.
     shards: list[dict[str, np.ndarray]] = [
         {f"solo.{i}": np.full((5,), float(i) * 0.5, dtype=np.float32)}
         for i in range(30)
@@ -193,7 +174,6 @@ def test_shard_with_mixed_float_and_int_tensors_skips_int_only(
     assert np.array_equal(got["float.w"], oracle["float.w"])
 
     health = SafetensorsCheckpointValidator(index_path).validate()
-    # 2 float tensors total; the int64 + bool tensors don't count.
     assert health.tensor_count == 2
     assert health.total_params == 16 + 4
 
@@ -211,8 +191,6 @@ def test_weight_map_non_sorted_shard_order_still_streams_correctly(
     shard_a: dict[str, np.ndarray] = {"a.w": np.full((3,), 1.0, dtype=np.float32)}
     shard_m: dict[str, np.ndarray] = {"m.w": np.full((3,), 5.0, dtype=np.float32)}
 
-    # Deliberately name files so lexical/natural shard order does NOT match
-    # the order they're referenced in weight_map below.
     save_file(
         {k: torch.from_numpy(v) for k, v in shard_z.items()},
         str(ckpt_dir / "shard-zulu.safetensors"),
@@ -226,8 +204,6 @@ def test_weight_map_non_sorted_shard_order_still_streams_correctly(
         str(ckpt_dir / "shard-mike.safetensors"),
     )
 
-    # weight_map insertion order intentionally: zulu, mike, alpha -- neither
-    # sorted nor reverse-sorted by filename.
     weight_map = {
         "z.w": "shard-zulu.safetensors",
         "m.w": "shard-mike.safetensors",
@@ -241,7 +217,6 @@ def test_weight_map_non_sorted_shard_order_still_streams_correctly(
     }
     assert got == {"z.w": 9.0, "m.w": 5.0, "a.w": 1.0}
 
-    # Validator sums across shards regardless of weight_map iteration order.
     health = SafetensorsCheckpointValidator(index_path).validate()
     assert health.tensor_count == 3
     assert health.total_params == 9
@@ -256,8 +231,6 @@ def test_weight_map_reverse_sorted_shard_order_bit_exact(tmp_path: Path) -> None
         "layer.1.w": rng.standard_normal((4, 4)).astype(np.float32)
     }
     ckpt_dir = tmp_path / "reverse"
-    # write_sharded names files model-00001-of-00002 / model-00002-of-00002
-    # in ascending order; rebuild the index with descending weight_map order.
     write_sharded(str(ckpt_dir), [shard_1, shard_2])
     weight_map = {
         "layer.1.w": "model-00002-of-00002.safetensors",
@@ -293,7 +266,7 @@ def test_shard_header_with_metadata_key_is_ignored_as_tensor(
     save_file(
         {k: torch.from_numpy(v) for k, v in shard_a.items()},
         str(ckpt_dir / fname),
-        metadata={"format": "pt", "producer": "weightlens-hardening-test"},
+        metadata={"format": "pt"},
     )
     weight_map = {"w": fname}
     index_path = _write_index(str(ckpt_dir), weight_map)
@@ -313,9 +286,6 @@ def test_shard_header_with_metadata_key_is_ignored_as_tensor(
 
 
 def test_multi_shard_with_metadata_on_one_shard_only(tmp_path: Path) -> None:
-    """__metadata__ present on just one shard's header must not affect
-    tensor counts/params contributed by other shards without it.
-    """
     ckpt_dir = tmp_path / "meta_mixed"
     os.makedirs(ckpt_dir, exist_ok=True)
 
@@ -351,16 +321,9 @@ def test_multi_shard_with_metadata_on_one_shard_only(tmp_path: Path) -> None:
     assert health.total_params == 10 + 10
 
 
-# --- Cross-cutting: single-tensor-per-shard fixture sanity check -----------
-
-
 def test_write_single_and_sharded_agree_on_full_tensor_set(
     tmp_path: Path,
 ) -> None:
-    """Sanity oracle: sharding an identical tensor set across N shards must
-    yield the same logical set of tensors as one single-file checkpoint,
-    bit-exact, regardless of how they're partitioned.
-    """
     rng = np.random.default_rng(7)
     tensors: dict[str, np.ndarray] = {
         f"t{i}": rng.standard_normal((3,)).astype(np.float32) for i in range(6)
@@ -369,7 +332,6 @@ def test_write_single_and_sharded_agree_on_full_tensor_set(
     single_path = str(tmp_path / "single.safetensors")
     write_single(single_path, tensors)
 
-    # Partition into 3 uneven shards: 1, 2, 3 tensors respectively.
     names = list(tensors)
     shards: list[dict[str, np.ndarray]] = [
         {names[0]: tensors[names[0]]},

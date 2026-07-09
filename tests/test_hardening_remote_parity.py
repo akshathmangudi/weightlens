@@ -1,10 +1,8 @@
-"""Adversarial parity tests: local path vs file:// vs memory:// URIs.
+"""Parity tests: local path vs file:// vs memory:// URIs.
 
-Focus: the SAME safetensors checkpoint bytes, read through three different
-URI schemes, must produce byte-identical streamed tensors and identical
-validator health. Also directly hammers ``ByteRangeReader`` boundary reads
-(offset 0, exact-length, tail, zero-length) over ``memory://`` against plain
-Python slices of the raw bytes as the oracle.
+Same safetensors bytes read via three URI schemes must produce byte-identical
+streamed tensors and identical validator health. Tests ByteRangeReader boundary
+reads against plain Python slices.
 """
 
 from __future__ import annotations
@@ -24,8 +22,7 @@ from weightlens.validators.safetensors import SafetensorsCheckpointValidator
 
 
 def _mem_root() -> str:
-    """A unique memory:// directory per test so the process-wide in-memory
-    filesystem never leaks state between test functions."""
+    """Unique memory:// directory per test to avoid leaking state."""
     return f"memory://wl-hardening-{uuid.uuid4().hex}"
 
 
@@ -47,9 +44,6 @@ def _health_fields(h: CheckpointHealth) -> tuple[int, bool, bool, int, int, list
     )
 
 
-# --------------------------------------------------------------------------
-# Single-file checkpoint: local path vs file:// vs memory://
-# --------------------------------------------------------------------------
 
 
 def test_single_file_local_vs_file_uri_vs_memory_uri_bit_exact(
@@ -83,10 +77,8 @@ def test_single_file_local_vs_file_uri_vs_memory_uri_bit_exact(
     for name in tensors:
         assert np.array_equal(local_result[name], file_result[name])
         assert np.array_equal(local_result[name], mem_result[name])
-        # dtype must also match exactly, not just values.
         assert local_result[name].dtype == file_result[name].dtype
         assert local_result[name].dtype == mem_result[name].dtype
-        # And bytes must be identical, not just numerically equal.
         assert local_result[name].tobytes() == mem_result[name].tobytes()
 
 
@@ -110,8 +102,6 @@ def test_single_file_validator_health_identical_across_schemes(
     h_mem = SafetensorsCheckpointValidator(mem_uri).validate()
 
     assert _health_fields(h_local) == _health_fields(h_file) == _health_fields(h_mem)
-    # Sanity: the oracle actually reflects the 2 float tensors, not a
-    # trivially-true all-zero/all-equal comparison.
     assert h_local.tensor_count == 2
     assert h_local.total_params == 100 + 5
     assert h_local.loadable is True
@@ -119,9 +109,6 @@ def test_single_file_validator_health_identical_across_schemes(
     assert h_local.corruption_flags == []
 
 
-# --------------------------------------------------------------------------
-# ByteRangeReader boundary reads over memory:// vs raw Python slices
-# --------------------------------------------------------------------------
 
 
 def test_byte_range_reader_boundary_reads_match_python_slices() -> None:
@@ -133,31 +120,21 @@ def test_byte_range_reader_boundary_reads_match_python_slices() -> None:
     reader = ByteRangeReader(uri)
     assert reader.size() == len(data)
 
-    # offset 0, small length
     assert reader.read(0, 4) == data[0:4]
-    # offset 0, exact full length
     assert reader.read(0, len(data)) == data[0 : len(data)]
-    # tail read: last N bytes
     tail_len = 17
     assert (
         reader.read(len(data) - tail_len, tail_len)
         == data[len(data) - tail_len : len(data)]
     )
-    # zero-length read at an arbitrary offset
     assert reader.read(123, 0) == b""
-    # zero-length read at offset 0
     assert reader.read(0, 0) == b""
-    # zero-length read at exact EOF
     assert reader.read(len(data), 0) == b""
-    # single-byte read in the middle
     assert reader.read(500, 1) == data[500:501]
-    # arbitrary interior slice, cross-checked against Python slicing oracle
     assert reader.read(37, 200) == data[37:237]
 
 
 def test_byte_range_reader_sequential_reads_reconstruct_full_blob() -> None:
-    """Reading the blob in adjacent chunks must reassemble it exactly,
-    proving no off-by-one overlap/gap in offset+length handling."""
     data = bytes((i * 7 + 3) % 256 for i in range(999))
     uri = f"{_mem_root()}/blob2.bin"
     with fsspec.open(uri, "wb") as f:
@@ -175,9 +152,6 @@ def test_byte_range_reader_sequential_reads_reconstruct_full_blob() -> None:
     assert bytes(reassembled) == data
 
 
-# --------------------------------------------------------------------------
-# Multi-shard checkpoint mirrored into memory:// vs local
-# --------------------------------------------------------------------------
 
 
 def test_sharded_checkpoint_memory_uri_bit_exact_parity(tmp_path: Path) -> None:
@@ -191,8 +165,6 @@ def test_sharded_checkpoint_memory_uri_bit_exact_parity(tmp_path: Path) -> None:
     local_dir = tmp_path / "ckpt"
     local_index_path = write_sharded(str(local_dir), [shard_a, shard_b])
 
-    # Mirror the *entire* directory (both shards + index.json) into
-    # memory://, matching what the real backend parity story requires.
     mem_root = _mem_root()
     mem_dir_name = "ckpt"
     for entry in sorted(Path(local_dir).iterdir()):
@@ -246,10 +218,6 @@ def test_sharded_checkpoint_validator_health_matches_local_and_memory(
 
 
 def test_sharded_checkpoint_file_uri_index_bit_exact_parity(tmp_path: Path) -> None:
-    """Same multi-shard checkpoint accessed through an explicit file://
-    URI on the index.json must also match the local-path result. This
-    exercises parent_uri/join_uri URI-joining logic under the file://
-    scheme, not just bare local paths."""
     shard_a: dict[str, np.ndarray] = {
         "x.weight": np.random.randn(7, 2).astype(np.float32),
     }
@@ -276,18 +244,11 @@ def test_sharded_checkpoint_file_uri_index_bit_exact_parity(tmp_path: Path) -> N
         assert local_result[name].tobytes() == file_result[name].tobytes()
 
 
-# --------------------------------------------------------------------------
-# Cross-scheme byte range parity on the raw shard bytes themselves
-# --------------------------------------------------------------------------
 
 
 def test_byte_range_reader_local_vs_file_vs_memory_same_offsets(
     tmp_path: Path,
 ) -> None:
-    """The exact same (offset, length) pairs, issued against local path,
-    file://, and memory:// readers of the identical bytes, must return
-    identical raw bytes -- proving ByteRangeReader itself (not just the
-    higher-level tensor decode) is scheme-agnostic."""
     rng = np.random.default_rng(42)
     data = rng.integers(0, 256, size=2048, dtype=np.uint8).tobytes()
 

@@ -16,13 +16,10 @@ except ImportError:  # pragma: no cover
 logger = logging.getLogger(__name__)
 
 
-def materialize(uri: str) -> Path:
-    """Return a local path for *uri*, downloading remote inputs to a temp cache.
-
-    Local paths (and ``file://`` URIs) are returned as-is. Remote URIs are
-    downloaded in full — the honest fallback for formats (like ``.pth``) whose
-    layout is not byte-rangeable.
-    """
+def materialize(
+    uri: str, storage_options: dict[str, object] | None = None
+) -> Path:
+    """Return a local path for uri, downloading remote inputs to a temp cache."""
     if not is_remote(uri):
         return Path(uri[len("file://") :] if uri.startswith("file://") else uri)
 
@@ -32,7 +29,7 @@ def materialize(uri: str) -> Path:
             "Install it with: pip install weightlens[remote]"
         )
     try:
-        fs, path = fsspec.core.url_to_fs(uri)
+        fs, path = fsspec.core.url_to_fs(uri, **(storage_options or {}))
     except ImportError as exc:
         raise MissingBackendError(
             "Reading this URI needs an extra backend. "
