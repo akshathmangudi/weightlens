@@ -58,18 +58,27 @@ def parse_header(header_bytes: bytes) -> tuple[int, dict[str, TensorSlice]]:
     except json.JSONDecodeError as exc:
         raise ValueError("safetensors header is not valid JSON") from exc
 
+    if not isinstance(header, dict):
+        raise ValueError("safetensors header must be a JSON object")
+
     slices: dict[str, TensorSlice] = {}
-    for name, meta in header.items():
-        if name == "__metadata__":
-            continue
-        begin, stop = meta["data_offsets"]
-        slices[name] = TensorSlice(
-            name=name,
-            dtype=str(meta["dtype"]),
-            shape=tuple(int(d) for d in meta["shape"]),
-            begin=int(begin),
-            end=int(stop),
-        )
+    # Wrap per-entry parsing so a malformed tensor record (missing dtype/shape/
+    # data_offsets, wrong types) surfaces as a clean ValueError rather than a
+    # raw KeyError/TypeError leaking to callers.
+    try:
+        for name, meta in header.items():
+            if name == "__metadata__":
+                continue
+            begin, stop = meta["data_offsets"]
+            slices[name] = TensorSlice(
+                name=name,
+                dtype=str(meta["dtype"]),
+                shape=tuple(int(d) for d in meta["shape"]),
+                begin=int(begin),
+                end=int(stop),
+            )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(f"malformed safetensors header entry: {exc}") from exc
     return header_len, slices
 
 

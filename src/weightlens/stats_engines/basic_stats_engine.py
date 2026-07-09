@@ -28,8 +28,14 @@ class BasicStatsEngine(StatsEngine):
             logger.error("Layer %s contains NaN or Inf values.", layer.name)
             raise ValueError(f"Layer {layer.name} contains NaN values.")
 
-        sum_sq = float(np.dot(values, values))  # pass 2
-        variance = max(sum_sq / param_count - mean * mean, 0.0)
+        flat = values.ravel()
+        sum_sq = float(np.dot(flat, flat))  # pass 2 (for L2 norm)
+        # Mean-subtracted (two-pass) variance in float64. The fused
+        # sum_sq/n - mean**2 form suffers catastrophic cancellation when
+        # |mean| >> std (e.g. near-constant norm-weight layers ~0.7), which
+        # broke the streamed-equals-full-load oracle. np.var subtracts the
+        # mean first, keeping streamed stats bit-close to a full numpy load.
+        variance = float(np.var(values, dtype=np.float64))
         std = float(np.sqrt(variance))
         l2_norm = float(np.sqrt(sum_sq))  # free (reuses sum_sq)
         min_value = float(np.min(values))  # pass 3

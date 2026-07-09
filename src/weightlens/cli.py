@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from rich.console import Console
+from rich.markup import escape
 from rich.table import Table
 
 from weightlens.aggregators import StreamingGlobalAggregator
@@ -19,11 +20,16 @@ from weightlens.diagnostics import (
     ExplodingVarianceRule,
     ExtremeSpikeRule,
 )
+from weightlens.io import materialize
+from weightlens.io.errors import MissingBackendError
+from weightlens.io.uri import is_remote
 from weightlens.models import CheckpointHealth
 from weightlens.reporters import RichReporter
 from weightlens.sources import PyTorchWeightSource
+from weightlens.sources.safetensors import SafetensorsWeightSource
 from weightlens.stats_engines import BasicStatsEngine
 from weightlens.validators import PyTorchCheckpointValidator
+from weightlens.validators.safetensors import SafetensorsCheckpointValidator
 
 
 class StaticCheckpointValidator(CheckpointValidator):
@@ -50,7 +56,7 @@ def _build_parser() -> argparse.ArgumentParser:
     analyze.add_argument(
         "--format",
         type=str,
-        choices=["pytorch", "dcp", "auto"],
+        choices=["pytorch", "dcp", "safetensors", "auto"],
         default="auto",
         help="Checkpoint format (default: auto-detect)",
     )
@@ -91,6 +97,20 @@ def _detect_format(path: Path) -> str:
     raise FileNotFoundError(f"Path does not exist: {path}")
 
 
+def _detect_format_target(target: str) -> str:
+    """Detect format from a path or URI string (extension-based for remote)."""
+    if target.endswith(".index.json") or target.endswith(".safetensors"):
+        return "safetensors"
+    if target.endswith((".pth", ".pt")):
+        return "pytorch"
+    if is_remote(target):
+        raise ValueError(
+            f"Cannot infer format for remote target {target!r}. "
+            "Pass --format safetensors or a .safetensors/.index.json/.pth URI."
+        )
+    return _detect_format(Path(target))
+
+
 def _render_health(console: Console, health: CheckpointHealth) -> None:
     table = Table(title="Checkpoint Health")
     table.add_column("Field", style="bold")
@@ -100,7 +120,11 @@ def _render_health(console: Console, health: CheckpointHealth) -> None:
     table.add_row("is_empty", str(health.is_empty))
     table.add_row("tensor_count", str(health.tensor_count))
     table.add_row("total_params", str(health.total_params))
-    flags = ", ".join(health.corruption_flags) if health.corruption_flags else "none"
+    flags = (
+        ", ".join(escape(f) for f in health.corruption_flags)
+        if health.corruption_flags
+        else "none"
+    )
     table.add_row("corruption_flags", flags)
     console.print(table)
 
@@ -121,7 +145,7 @@ def _run_analyze_pytorch(
     try:
         health = validator.validate()
     except FileNotFoundError:
-        console.print(f"Checkpoint not found: {checkpoint_path}")
+        console.print(f"Checkpoint not found: {escape(str(checkpoint_path))}")
         return 2
 
     if not health.loadable or health.is_empty:
@@ -169,7 +193,7 @@ def _run_analyze_dcp(
     try:
         health = validator.validate()
     except FileNotFoundError:
-        console.print(f"Checkpoint directory not found: {checkpoint_path}")
+        console.print(f"Checkpoint directory not found: {escape(str(checkpoint_path))}")
         return 2
 
     if not health.loadable or health.is_empty:
@@ -200,8 +224,45 @@ def _run_analyze_dcp(
     return 0
 
 
+def _run_analyze_safetensors(
+    uri: str,
+    *,
+    console: Console,
+    num_workers: int | None = None,
+) -> int:
+    validator = SafetensorsCheckpointValidator(uri)
+    try:
+        health = validator.validate()
+    except FileNotFoundError:
+        console.print(f"Checkpoint not found: {escape(uri)}")
+        return 2
+
+    if not health.loadable or health.is_empty:
+        _render_health(console, health)
+        console.print("Analysis aborted: checkpoint not loadable or empty.")
+        return 1
+
+    analyzer = Analyzer(
+        source=SafetensorsWeightSource(uri),
+        validator=StaticCheckpointValidator(health),
+        stats_engine=BasicStatsEngine(),
+        aggregator=StreamingGlobalAggregator(),
+        rules=[
+            DeadLayerRule(),
+            ExplodingVarianceRule(),
+            ExtremeSpikeRule(),
+            AbnormalNormRule(),
+        ],
+        classifier=PyTorchParameterClassifier(),
+        num_workers=num_workers,
+    )
+    result = analyzer.analyze()
+    RichReporter(console).render(result, uri.rsplit("/", 1)[-1])
+    return 0
+
+
 def _run_analyze(
-    checkpoint_path: Path,
+    target: str,
     *,
     fmt: str = "auto",
     include_optimizer: bool = False,
@@ -209,26 +270,31 @@ def _run_analyze(
     console: Console | None,
 ) -> int:
     out_console = console or Console()
+    try:
+        resolved_fmt = _detect_format_target(target) if fmt == "auto" else fmt
 
-    if fmt == "auto":
-        try:
-            resolved_fmt = _detect_format(checkpoint_path)
-        except (FileNotFoundError, ValueError) as exc:
-            out_console.print(str(exc))
-            return 2
-    else:
-        resolved_fmt = fmt
-
-    if resolved_fmt == "dcp":
-        return _run_analyze_dcp(
-            checkpoint_path,
-            console=out_console,
-            include_optimizer=include_optimizer,
-            num_workers=num_workers,
+        if resolved_fmt == "safetensors":
+            return _run_analyze_safetensors(
+                target, console=out_console, num_workers=num_workers
+            )
+        if resolved_fmt == "dcp":
+            return _run_analyze_dcp(
+                Path(target),
+                console=out_console,
+                include_optimizer=include_optimizer,
+                num_workers=num_workers,
+            )
+        # pytorch: materialize if remote, then analyze locally.
+        local_path = materialize(target) if is_remote(target) else Path(target)
+        return _run_analyze_pytorch(
+            local_path, console=out_console, num_workers=num_workers
         )
-    return _run_analyze_pytorch(
-        checkpoint_path, console=out_console, num_workers=num_workers
-    )
+    except MissingBackendError as exc:
+        out_console.print(f"[red]{escape(str(exc))}[/red]")
+        return 3
+    except (FileNotFoundError, ValueError) as exc:
+        out_console.print(escape(str(exc)))
+        return 2
 
 
 def run_cli(
@@ -239,7 +305,7 @@ def run_cli(
     args = parser.parse_args(argv)
     if args.command == "analyze":
         return _run_analyze(
-            Path(args.checkpoint),
+            args.checkpoint,  # keep as str; URIs must not be wrapped in Path
             fmt=args.format,
             include_optimizer=args.include_optimizer,
             num_workers=_parse_num_workers(args.num_workers),

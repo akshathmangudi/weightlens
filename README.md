@@ -33,6 +33,20 @@ lens analyze <dcp_directory> --format dcp
 lens analyze <checkpoint>.pth --num-workers 2
 ```
 
+## Remote checkpoints (safetensors)
+
+Analyze checkpoints straight from object storage — only tensor bytes are fetched, nothing is downloaded or consolidated:
+
+```bash
+pip install weightlens[s3]     # or [gcs], or [remote] for local fsspec only
+
+lens analyze s3://bucket/model.safetensors
+lens analyze s3://bucket/model.safetensors.index.json   # sharded
+lens analyze gs://bucket/model.safetensors
+```
+
+Credentials use your existing AWS/GCS credential chain (env vars, `~/.aws/…`, instance roles) — Weightlens stores no secrets. Remote `.pth` is supported via download-to-cache (`.pth` cannot be byte-ranged).
+
 ## Demo: corrupted checkpoints
 Generate a clean checkpoint and two corrupted variants, then compare manual loading
 versus Weightlens diagnostics.

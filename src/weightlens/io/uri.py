@@ -20,6 +20,11 @@ def extra_for_uri(uri: str) -> str:
 
 
 def join_uri(base_uri: str, name: str) -> str:
+    # Empty base (a bare relative index filename, e.g. "model.index.json" with
+    # no directory) must yield a relative sibling name, not "/name" which would
+    # (wrongly) resolve shards against the filesystem root.
+    if not base_uri:
+        return name
     return base_uri.rstrip("/") + "/" + name.lstrip("/")
 
 

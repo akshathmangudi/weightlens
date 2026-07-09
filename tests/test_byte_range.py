@@ -20,7 +20,10 @@ def test_uri_helpers() -> None:
     assert is_remote("/local/x") is False
     assert is_remote("file:///local/x") is False
     assert join_uri("s3://b/dir", "shard.st") == "s3://b/dir/shard.st"
+    # Empty base (bare relative index filename) -> relative sibling, not "/name".
+    assert join_uri("", "shard.st") == "shard.st"
     assert parent_uri("s3://b/dir/model.index.json") == "s3://b/dir"
+    assert parent_uri("model.safetensors.index.json") == ""
 
 
 def test_byte_range_reads_exact_slice_over_memory() -> None:
