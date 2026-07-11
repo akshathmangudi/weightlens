@@ -39,6 +39,11 @@ class ByteRangeReader:
         if length == 0:
             return b""
         data: bytes = self._fs.cat_file(self._path, start=offset, end=offset + length)
+        if len(data) != length:
+            raise ValueError(
+                f"Short read: requested {length} bytes at offset {offset}, "
+                f"got {len(data)} from {self.uri}"
+            )
         return data
 
     def size(self) -> int:

@@ -33,7 +33,7 @@ class BasicStatsEngine(StatsEngine):
 
         flat = values.ravel().astype(np.float64, copy=False)
         sum_sq = float(np.dot(flat, flat))
-        variance = (sum_sq / param_count) - (mean * mean)
+        variance = float(np.var(flat, ddof=0))
         variance = max(0.0, variance)
         std = float(np.sqrt(variance))
         l2_norm = float(np.sqrt(sum_sq))
@@ -47,6 +47,8 @@ class BasicStatsEngine(StatsEngine):
             flat, bins=_HISTOGRAM_BINS, range=(_HISTOGRAM_MIN, _HISTOGRAM_MAX)
         )
         histogram_counts = [float(c) for c in hist]
+        histogram_underflow = int(np.sum(flat < _HISTOGRAM_MIN))
+        histogram_overflow = int(np.sum(flat > _HISTOGRAM_MAX))
 
         logger.debug(
             "Computed stats for %s: mean=%.6f std=%.6f min=%.6f max=%.6f "
@@ -72,6 +74,8 @@ class BasicStatsEngine(StatsEngine):
             param_count=param_count,
             p99_abs=p99_abs,
             histogram_counts=histogram_counts,
+            histogram_underflow=histogram_underflow,
+            histogram_overflow=histogram_overflow,
         )
 
     @staticmethod

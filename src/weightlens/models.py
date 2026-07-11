@@ -53,6 +53,8 @@ class LayerStats(BaseModel):
     param_count: int
     p99_abs: float
     histogram_counts: list[float] | None = None
+    histogram_underflow: int = 0
+    histogram_overflow: int = 0
 
 
 class GlobalStats(BaseModel):

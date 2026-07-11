@@ -4,6 +4,7 @@ from collections.abc import Iterable
 
 from rich import box
 from rich.console import Console
+from rich.markup import escape
 from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
@@ -25,7 +26,9 @@ class RichReporter(Reporter):
 
     def render(self, result: AnalysisResult, filename: str) -> None:
         self._console.print()
-        self._console.print(f"Statistics for {filename}", style="bold underline")
+        self._console.print(
+            f"Statistics for {escape(filename)}", style="bold underline"
+        )
         self._console.print(Rule(style="dim"))
 
         self._console.print(self._build_health_section(result.health))

@@ -15,6 +15,8 @@ except ImportError:  # pragma: no cover
 
 logger = logging.getLogger(__name__)
 
+MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024 * 1024  # 50 GiB
+
 
 def materialize(
     uri: str, storage_options: dict[str, object] | None = None
@@ -35,6 +37,13 @@ def materialize(
             "Reading this URI needs an extra backend. "
             f"Install it with: pip install weightlens[{extra_for_uri(uri)}]"
         ) from exc
+
+    info = fs.info(path)
+    size = int(info.get("size", 0))
+    if size > MAX_DOWNLOAD_BYTES:
+        raise ValueError(
+            f"Remote file size {size} exceeds maximum {MAX_DOWNLOAD_BYTES} bytes"
+        )
 
     cache_dir = Path(tempfile.mkdtemp(prefix="weightlens-"))
     local = cache_dir / Path(path).name

@@ -32,25 +32,23 @@ def _extract_state_dict(checkpoint: Mapping[str, object]) -> Mapping[str, object
 
 
 def _load_checkpoint(path: Path) -> object:
-    """Load a checkpoint with safe fallback.
+    """Load a checkpoint safely.
 
-    Tries ``weights_only=True`` first.  If that fails with an
-    ``UnpicklingError`` (e.g. numpy scalar globals), retries with
-    ``weights_only=False`` and logs a warning.
+    Uses ``weights_only=True`` to prevent arbitrary code execution.
+    If it fails, raises a ``ValueError`` instead of falling back to
+    unsafe unpickling.
     """
     try:
         return torch.load(
             path, weights_only=True, map_location="cpu", mmap=True
         )
-    except pickle.UnpicklingError:
-        logger.warning(
-            "weights_only=True failed for %s, retrying with "
-            "weights_only=False.",
-            path,
-        )
-        return torch.load(
-            path, weights_only=False, map_location="cpu", mmap=True
-        )
+    except pickle.UnpicklingError as exc:
+        raise ValueError(
+            f"Checkpoint {path} could not be loaded safely "
+            f"(weights_only=True failed). The file may contain "
+            f"unrecognized types. If this checkpoint is trusted, "
+            f"add safe globals via torch.serialization.add_safe_globals()."
+        ) from exc
 
 
 class PyTorchCheckpointValidator(CheckpointValidator):

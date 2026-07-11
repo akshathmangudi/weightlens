@@ -64,6 +64,8 @@ class StreamingGlobalAggregator(GlobalAggregator):
         mean: float,
         variance: float,
         histogram_counts: list[float] | None = None,
+        histogram_underflow: int = 0,
+        histogram_overflow: int = 0,
     ) -> None:
         """Accept pre-computed mean/variance to skip redundant array passes."""
         if count == 0:
@@ -73,7 +75,11 @@ class StreamingGlobalAggregator(GlobalAggregator):
 
         self._merge_batch(count, mean, variance * count)
         if histogram_counts is not None:
-            self._quantiles.merge_histogram(histogram_counts)
+            self._quantiles.merge_histogram(
+                histogram_counts,
+                underflow=histogram_underflow,
+                overflow=histogram_overflow,
+            )
         else:
             self._quantiles.update(values)
         logger.debug("Updated global aggregator (from summary) count=%d.", self._count)
@@ -86,6 +92,7 @@ class StreamingGlobalAggregator(GlobalAggregator):
             logger.error("Finalize called without any values.")
             raise ValueError("No values provided for global aggregation.")
         variance = self._m2 / self._count
+        variance = max(0.0, variance)
         layer_metrics = self._layer_metrics.finalize()
         stats = GlobalStats(
             mean=self._mean,

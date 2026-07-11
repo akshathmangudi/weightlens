@@ -99,7 +99,7 @@ class DCPCheckpointValidator(CheckpointValidator):
 
         # Phase 5: parse metadata
         try:
-            from weightlens.sources.dcp import read_metadata
+            from weightlens.sources.dcp import _validate_shard_path, read_metadata
 
             metadata = read_metadata(self._checkpoint_dir)
         except Exception:
@@ -143,7 +143,7 @@ class DCPCheckpointValidator(CheckpointValidator):
             referenced_files.add(info.relative_path)
 
         for ref_file in sorted(referenced_files):
-            ref_path = self._checkpoint_dir / ref_file
+            ref_path = _validate_shard_path(self._checkpoint_dir, ref_file)
             if not ref_path.exists():
                 flag = f"missing_shard:{ref_file}"
                 corruption_flags.append(flag)

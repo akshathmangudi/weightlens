@@ -8,6 +8,7 @@ import numpy as np
 from numpy.typing import NDArray
 
 HEADER_LEN_BYTES = 8
+MAX_HEADER_LEN = 100 * 1024 * 1024  # 100 MB
 
 _FLOAT_DTYPES = frozenset({"F16", "F32", "F64", "BF16"})
 _NP_LE = {"F16": "<f2", "F32": "<f4", "F64": "<f8"}
@@ -41,7 +42,13 @@ def read_header_len(prefix: bytes) -> int:
     if len(prefix) < HEADER_LEN_BYTES:
         raise ValueError("truncated safetensors file: missing 8-byte length prefix")
     (n,) = struct.unpack("<Q", prefix[:HEADER_LEN_BYTES])
-    return int(n)
+    header_len = int(n)
+    if header_len > MAX_HEADER_LEN:
+        raise ValueError(
+            f"header length {header_len} exceeds maximum {MAX_HEADER_LEN}; "
+            "file may be corrupt or malicious"
+        )
+    return header_len
 
 
 def parse_header(header_bytes: bytes) -> tuple[int, dict[str, TensorSlice]]:

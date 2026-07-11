@@ -26,6 +26,11 @@ def join_uri(base_uri: str, name: str) -> str:
 
 
 def parent_uri(uri: str) -> str:
+    if "://" in uri:
+        proto, path_part = uri.split("://", 1)
+        if "/" not in path_part:
+            return f"{proto}://{path_part}"
+        return uri.rsplit("/", 1)[0]
     return uri.rsplit("/", 1)[0] if "/" in uri else ""
 
 

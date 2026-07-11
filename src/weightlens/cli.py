@@ -25,11 +25,12 @@ from weightlens.io.errors import MissingBackendError
 from weightlens.io.uri import anon_storage_options, is_remote
 from weightlens.models import CheckpointHealth
 from weightlens.reporters import RichReporter
-from weightlens.sources import PyTorchWeightSource
-from weightlens.sources.safetensors import SafetensorsWeightSource
+from weightlens.sources import PyTorchWeightSource, SafetensorsWeightSource
 from weightlens.stats_engines import BasicStatsEngine
-from weightlens.validators import PyTorchCheckpointValidator
-from weightlens.validators.safetensors import SafetensorsCheckpointValidator
+from weightlens.validators import (
+    PyTorchCheckpointValidator,
+    SafetensorsCheckpointValidator,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,12 +49,20 @@ def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="lens", description="WeightLens CLI")
     subparsers = parser.add_subparsers(dest="command", required=True)
     analyze = subparsers.add_parser(
-        "analyze", help="Analyze a checkpoint (.pth file or DCP directory)"
+        "analyze",
+        help=(
+            "Analyze a checkpoint "
+            "(.pth/.safetensors file, .index.json, or DCP directory)"
+        ),
     )
     analyze.add_argument(
         "checkpoint",
         type=str,
-        help="Path to the checkpoint file (.pth) or directory (DCP)",
+        help=(
+            "Path or URI to the checkpoint (e.g., model.pth, model.safetensors, "
+            "model.safetensors.index.json, s3://bucket/model.safetensors, "
+            "or DCP directory)"
+        ),
     )
     analyze.add_argument(
         "--format",
@@ -70,7 +79,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     analyze.add_argument(
         "--num-workers",
-        type=str,
+        type=_parse_num_workers,
         default="1",
         help="Number of parallel stats workers ('auto' or integer, default: 1)",
     )
@@ -140,7 +149,17 @@ def _render_health(console: Console, health: CheckpointHealth) -> None:
 def _parse_num_workers(value: str) -> int | None:
     if value == "auto":
         return None
-    return int(value)
+    try:
+        n = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"--num-workers must be 'auto' or an integer, got {value!r}"
+        ) from None
+    if n < 1:
+        raise argparse.ArgumentTypeError(
+            f"--num-workers must be >= 1, got {n}"
+        )
+    return n
 
 
 def _run_analyze_pytorch(
@@ -340,7 +359,7 @@ def run_cli(
             args.checkpoint,  # keep as str; URIs must not be wrapped in Path
             fmt=args.format,
             include_optimizer=args.include_optimizer,
-            num_workers=_parse_num_workers(args.num_workers),
+            num_workers=args.num_workers,
             anon=args.anon,
             console=console,
         )

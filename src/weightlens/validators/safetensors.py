@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from math import prod
 
@@ -86,7 +87,8 @@ class SafetensorsCheckpointValidator(CheckpointValidator):
             # propagate so the CLI can map each to a distinct exit code and
             # message, rather than being misreported as corruption.
             raise
-        except Exception as exc:  # unparseable header / bad index
+        except (ValueError, json.JSONDecodeError) as exc:
+            # unparseable header / bad index
             logger.error("Safetensors validation failed: %s", exc)
             return CheckpointHealth(
                 file_size_bytes=0,

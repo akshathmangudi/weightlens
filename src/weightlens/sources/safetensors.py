@@ -40,8 +40,13 @@ class SafetensorsWeightSource(WeightSource):
 
     @staticmethod
     def _load_header(reader: ByteRangeReader) -> tuple[int, dict[str, TensorSlice]]:
-        header_len = read_header_len(reader.read(0, HEADER_LEN_BYTES))
-        header_bytes = reader.read(0, HEADER_LEN_BYTES + header_len)
+        try:
+            header_len = read_header_len(reader.read(0, HEADER_LEN_BYTES))
+            header_bytes = reader.read(0, HEADER_LEN_BYTES + header_len)
+        except ValueError as exc:
+            if "Short read" in str(exc):
+                raise ValueError("truncated safetensors file") from exc
+            raise
         return parse_header(header_bytes)
 
     def _stream_reader(
