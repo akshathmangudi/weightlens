@@ -21,9 +21,9 @@ class StreamingGlobalAggregator(GlobalAggregator):
 
     def __init__(
         self,
-        histogram_bins: int = 2048,
-        histogram_min: float = -10.0,
-        histogram_max: float = 10.0,
+        histogram_bins: int = 4096,
+        histogram_min: float = -100.0,
+        histogram_max: float = 100.0,
     ) -> None:
         self._count = 0
         self._mean = 0.0
@@ -63,6 +63,7 @@ class StreamingGlobalAggregator(GlobalAggregator):
         count: int,
         mean: float,
         variance: float,
+        histogram_counts: list[float] | None = None,
     ) -> None:
         """Accept pre-computed mean/variance to skip redundant array passes."""
         if count == 0:
@@ -71,7 +72,10 @@ class StreamingGlobalAggregator(GlobalAggregator):
             raise ValueError("Non-finite value encountered in global aggregation.")
 
         self._merge_batch(count, mean, variance * count)
-        self._quantiles.update(values)
+        if histogram_counts is not None:
+            self._quantiles.merge_histogram(histogram_counts)
+        else:
+            self._quantiles.update(values)
         logger.debug("Updated global aggregator (from summary) count=%d.", self._count)
 
     def update_layer_stats(self, layer_stats: LayerStats) -> None:

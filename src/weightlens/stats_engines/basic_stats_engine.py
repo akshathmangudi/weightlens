@@ -10,6 +10,10 @@ from weightlens.models import LayerStats, LayerTensor
 
 logger = logging.getLogger(__name__)
 
+_HISTOGRAM_BINS = 4096
+_HISTOGRAM_MIN = -100.0
+_HISTOGRAM_MAX = 100.0
+
 
 class BasicStatsEngine(StatsEngine):
     """Compute basic descriptive statistics for a layer."""
@@ -21,7 +25,7 @@ class BasicStatsEngine(StatsEngine):
             logger.error("Layer %s is empty.", layer.name)
             raise ValueError(f"Layer {layer.name} is empty.")
 
-        total = float(np.sum(values))
+        total = float(np.sum(values, dtype=np.float64))
         mean = total / param_count
         if not math.isfinite(mean):
             logger.error("Layer %s contains NaN or Inf values.", layer.name)
@@ -29,9 +33,8 @@ class BasicStatsEngine(StatsEngine):
 
         flat = values.ravel()
         sum_sq = float(np.dot(flat, flat))
-        # Use np.var (two-pass) for precision; fused sum_sq/n - mean**2 loses
-        # accuracy when |mean| >> std, breaking streamed-vs-full-load checks.
-        variance = float(np.var(values, dtype=np.float64))
+        variance = (sum_sq / param_count) - (mean * mean)
+        variance = max(0.0, variance)
         std = float(np.sqrt(variance))
         l2_norm = float(np.sqrt(sum_sq))
         min_value = float(np.min(values))
@@ -39,6 +42,12 @@ class BasicStatsEngine(StatsEngine):
         nonzero_count = int(np.count_nonzero(values))
         sparsity = 1.0 - (nonzero_count / param_count)
         p99_abs = self._compute_p99_abs(values)
+
+        hist, _ = np.histogram(
+            flat, bins=_HISTOGRAM_BINS, range=(_HISTOGRAM_MIN, _HISTOGRAM_MAX)
+        )
+        histogram_counts = hist.tolist()
+
         logger.debug(
             "Computed stats for %s: mean=%.6f std=%.6f min=%.6f max=%.6f "
             "l2_norm=%.6f sparsity=%.6f p99_abs=%.6f.",
@@ -62,6 +71,7 @@ class BasicStatsEngine(StatsEngine):
             sparsity=sparsity,
             param_count=param_count,
             p99_abs=p99_abs,
+            histogram_counts=histogram_counts,
         )
 
     @staticmethod

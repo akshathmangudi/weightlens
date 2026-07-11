@@ -136,7 +136,11 @@ class Analyzer:
 
             try:
                 self._aggregator.update_from_summary(
-                    layer.values, count=count, mean=mean, variance=variance
+                    layer.values,
+                    count=count,
+                    mean=mean,
+                    variance=variance,
+                    histogram_counts=stats.histogram_counts,
                 )
             except ValueError:
                 logger.warning(
@@ -159,7 +163,11 @@ class Analyzer:
                 bucket_aggregators[category] = self._create_bucket_aggregator()
             bucket_agg = bucket_aggregators[category]
             bucket_agg.update_from_summary(
-                layer.values, count=count, mean=mean, variance=variance
+                layer.values,
+                count=count,
+                mean=mean,
+                variance=variance,
+                histogram_counts=stats.histogram_counts,
             )
             bucket_agg.update_layer_stats(stats)
 
@@ -254,7 +262,11 @@ class Analyzer:
 
         try:
             self._aggregator.update_from_summary(
-                values, count=count, mean=mean, variance=variance
+                values,
+                count=count,
+                mean=mean,
+                variance=variance,
+                histogram_counts=stats.histogram_counts,
             )
         except ValueError:
             logger.warning(
@@ -277,7 +289,11 @@ class Analyzer:
             bucket_aggregators[category] = self._create_bucket_aggregator()
         bucket_agg = bucket_aggregators[category]
         bucket_agg.update_from_summary(
-            values, count=count, mean=mean, variance=variance
+            values,
+            count=count,
+            mean=mean,
+            variance=variance,
+            histogram_counts=stats.histogram_counts,
         )
         bucket_agg.update_layer_stats(stats)
 

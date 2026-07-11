@@ -28,7 +28,7 @@ class DeadLayerRule(DiagnosticRule):
         self, layer: LayerStats, global_stats: GlobalStats
     ) -> DiagnosticFlag | None:
         _ = global_stats
-        dead_fraction = float(layer.sparsity)
+        dead_fraction = layer.sparsity
         if dead_fraction >= 0.9999:
             flag = DiagnosticFlag(
                 layer=layer.name,
@@ -60,8 +60,8 @@ class ExplodingVarianceRule(DiagnosticRule):
     def check(
         self, layer: LayerStats, global_stats: GlobalStats
     ) -> DiagnosticFlag | None:
-        variance = float(layer.std) ** 2
-        median_variance = float(global_stats.median_layer_variance)
+        variance = layer.std ** 2
+        median_variance = global_stats.median_layer_variance
         if (
             not math.isfinite(variance)
             or not math.isfinite(median_variance)
@@ -109,8 +109,8 @@ class ExtremeSpikeRule(DiagnosticRule):
         self, layer: LayerStats, global_stats: GlobalStats
     ) -> DiagnosticFlag | None:
         _ = global_stats
-        max_abs = max(abs(float(layer.min)), abs(float(layer.max)))
-        p99_abs = float(layer.p99_abs)
+        max_abs = max(abs(layer.min), abs(layer.max))
+        p99_abs = layer.p99_abs
         if (
             not math.isfinite(max_abs)
             or not math.isfinite(p99_abs)
@@ -157,9 +157,9 @@ class AbnormalNormRule(DiagnosticRule):
     def check(
         self, layer: LayerStats, global_stats: GlobalStats
     ) -> DiagnosticFlag | None:
-        norm = float(layer.l2_norm)
-        median_norm = float(global_stats.median_layer_norm)
-        iqr_norm = float(global_stats.iqr_layer_norm)
+        norm = layer.l2_norm
+        median_norm = global_stats.median_layer_norm
+        iqr_norm = global_stats.iqr_layer_norm
         if (
             not math.isfinite(norm)
             or not math.isfinite(median_norm)

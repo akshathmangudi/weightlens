@@ -52,6 +52,7 @@ class LayerStats(BaseModel):
     sparsity: float
     param_count: int
     p99_abs: float
+    histogram_counts: list[float] | None = None
 
 
 class GlobalStats(BaseModel):
