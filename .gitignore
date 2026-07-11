@@ -12,3 +12,8 @@ scripts/
 .ruff_cache/
 .pytest_cache/
 .mypy_cache/
+
+# GSD workspace (local only)
+.gsd/
+gsd/
+AGENTS.md
