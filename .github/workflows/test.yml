@@ -1,0 +1,62 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  quick:
+    name: "Lint + typecheck + unit tests"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: pip install uv
+      - name: Install dependencies
+        run: uv sync --extra dev
+      - name: Lint
+        run: uv run ruff check src tests
+      - name: Typecheck (mypy)
+        run: uv run mypy
+      - name: Typecheck (pyright)
+        run: uv run pyright
+      - name: Unit tests
+        run: uv run pytest -ra -m "not integration" -q
+
+  performance:
+    name: "Performance regression + math robustness"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: pip install uv
+      - name: Install dependencies
+        run: uv sync --extra dev
+      - name: Performance + math tests
+        run: uv run pytest tests/test_performance_regression.py tests/test_math_robustness.py tests/test_hardening_golden.py -v
+
+  integration:
+    name: "Integration tests (moto S3)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: pip install uv
+      - name: Install dependencies
+        run: uv sync --extra dev
+      - name: Integration tests
+        run: uv run pytest -m integration -v
