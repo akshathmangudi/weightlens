@@ -166,5 +166,5 @@ def test_streaming_global_aggregator_clamps_overflow_quantiles() -> None:
 
     stats = aggregator.finalize()
 
-    assert stats.p1 == -1.0
-    assert stats.p99 == 1.0
+    np.testing.assert_allclose(stats.p1, -1.0, atol=0.01)
+    np.testing.assert_allclose(stats.p99, 1.0, atol=0.01)

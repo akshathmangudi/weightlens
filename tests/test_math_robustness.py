@@ -276,3 +276,25 @@ def test_bf16_roundtrip_matches_oracle(tmp_path: Path) -> None:
     assert got.sparsity == pytest.approx(oracle_sparsity, abs=1e-12)
     np.testing.assert_allclose(got.p99_abs, oracle_p99, rtol=1e-5)
     assert got.param_count == int(flat.size)
+
+
+def test_layer_stats_deserializes_without_histogram_counts() -> None:
+    """Old serialized results (no histogram field) must parse into current model."""
+    from weightlens.models import LayerStats
+
+    old_payload = {
+        "name": "w",
+        "category": "kernel",
+        "mean": 0.0,
+        "std": 1.0,
+        "min": -1.0,
+        "max": 1.0,
+        "l2_norm": 10.0,
+        "sparsity": 0.0,
+        "param_count": 100,
+        "p99_abs": 1.0,
+    }
+    result = LayerStats.model_validate(old_payload)
+    assert result.histogram_counts is None
+    assert result.histogram_underflow == 0
+    assert result.histogram_overflow == 0

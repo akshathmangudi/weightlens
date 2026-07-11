@@ -80,4 +80,7 @@ class BasicStatsEngine(StatsEngine):
 
     @staticmethod
     def _compute_p99_abs(values: np.ndarray) -> float:
+        # O(n log n) via partition; histogram-based p99 is approximated
+        # at fixed range and would clip extreme values. For large layers
+        # a P² streaming estimator would be faster — see phase spec.
         return float(np.quantile(np.abs(values), 0.99, method="linear"))

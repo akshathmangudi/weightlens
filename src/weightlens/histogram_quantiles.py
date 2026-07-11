@@ -12,7 +12,13 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class FixedRangeHistogramQuantiles:
-    """Approximate quantiles using a fixed-range histogram with overflow bins."""
+    """Approximate quantiles using a fixed-range histogram with overflow bins.
+
+    Bin counts are stored as float64 (``array("d")``) which can represent
+    integers exactly up to 2⁵³ (≈ 9×10¹⁵). This is sufficient for any
+    practical model size with 4096 bins — each bin would need > 2×10¹²
+    parameters to risk rounding.
+    """
 
     min_value: float
     max_value: float
@@ -69,12 +75,19 @@ class FixedRangeHistogramQuantiles:
             raise ValueError("q must be in (0, 1).")
 
         self._check_overflow_ratio()
+        width = (self.max_value - self.min_value) / self.bins
 
         target = q * self._total
         if target <= self._underflow:
-            return self.min_value
+            if self._underflow > 0 and target > 0:
+                return self.min_value - (1.0 - target / self._underflow) * width
+            return self.min_value - width
         if target >= self._total - self._overflow:
-            return self.max_value
+            if self._overflow > 0 and target < self._total:
+                return self.max_value + (
+                    (target - (self._total - self._overflow)) / self._overflow
+                ) * width
+            return self.max_value + width
 
         cumulative = np.cumsum(self._counts, dtype=np.float64)
         idx = int(np.searchsorted(cumulative, target - self._underflow, side="right"))
