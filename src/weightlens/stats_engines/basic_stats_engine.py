@@ -31,7 +31,7 @@ class BasicStatsEngine(StatsEngine):
             logger.error("Layer %s contains NaN or Inf values.", layer.name)
             raise ValueError(f"Layer {layer.name} contains NaN values.")
 
-        flat = values.ravel()
+        flat = values.ravel().astype(np.float64, copy=False)
         sum_sq = float(np.dot(flat, flat))
         variance = (sum_sq / param_count) - (mean * mean)
         variance = max(0.0, variance)
@@ -46,7 +46,7 @@ class BasicStatsEngine(StatsEngine):
         hist, _ = np.histogram(
             flat, bins=_HISTOGRAM_BINS, range=(_HISTOGRAM_MIN, _HISTOGRAM_MAX)
         )
-        histogram_counts = hist.tolist()
+        histogram_counts = [float(c) for c in hist]
 
         logger.debug(
             "Computed stats for %s: mean=%.6f std=%.6f min=%.6f max=%.6f "

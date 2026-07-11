@@ -34,6 +34,9 @@ class FixedRangeHistogramQuantiles:
         if values.size == 0:
             return
 
+        if not np.isfinite(values).all():
+            raise ValueError("Histogram input contains NaN or Inf.")
+
         self._underflow += int(np.sum(values < self.min_value))
         self._overflow += int(np.sum(values > self.max_value))
 

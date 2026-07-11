@@ -134,8 +134,9 @@ def test_variance_guards_against_negative() -> None:
 
     stats = engine.compute_layer(layer)
 
+    true_std = float(np.std(base.astype(np.float64), ddof=0))
+    np.testing.assert_allclose(stats.std, true_std, rtol=1e-2, atol=1e-12)
     assert stats.std >= 0.0
-    assert stats.std < 1e-5
 
 
 def test_histogram_overflow_logs_warning(caplog: pytest.LogCaptureFixture) -> None:

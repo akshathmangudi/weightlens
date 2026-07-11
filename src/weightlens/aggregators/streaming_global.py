@@ -45,8 +45,8 @@ class StreamingGlobalAggregator(GlobalAggregator):
         if value_count == 0:
             return
 
-        batch_mean = float(np.mean(values))
-        batch_variance = float(np.var(values, ddof=0))
+        batch_mean = float(np.mean(values, dtype=np.float64))
+        batch_variance = float(np.var(values, ddof=0, dtype=np.float64))
         if not math.isfinite(batch_mean) or not math.isfinite(batch_variance):
             logger.error("Non-finite value encountered in global aggregation.")
             raise ValueError("Non-finite value encountered in global aggregation.")
