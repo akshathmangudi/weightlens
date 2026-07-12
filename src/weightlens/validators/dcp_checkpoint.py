@@ -14,7 +14,7 @@ _METADATA_FILENAMES = (".metadata", "metadata")
 class DCPCheckpointValidator(CheckpointValidator):
     """Validate DCP (Distributed Checkpoint) directory integrity.
 
-    **EXPERIMENTAL** — performs metadata-only validation without loading
+    **EXPERIMENTAL**: performs metadata-only validation without loading
     tensor data.  NaN / zero-flood detection is handled by the analysis
     pipeline (``BasicStatsEngine``, ``DeadLayerRule``, ``ExtremeSpikeRule``).
     """
@@ -89,7 +89,7 @@ class DCPCheckpointValidator(CheckpointValidator):
                 corruption_flags=corruption_flags,
             )
 
-        # Phase 4: shard file scan — flag zero-byte shards
+        # Phase 4: shard file scan, flag zero-byte shards
         shard_files = list(self._checkpoint_dir.glob("*.distcp"))
         for shard in shard_files:
             if shard.stat().st_size == 0:
@@ -99,7 +99,7 @@ class DCPCheckpointValidator(CheckpointValidator):
 
         # Phase 5: parse metadata
         try:
-            from weightlens.sources.dcp import read_metadata
+            from weightlens.sources.dcp import _validate_shard_path, read_metadata
 
             metadata = read_metadata(self._checkpoint_dir)
         except Exception:
@@ -143,7 +143,7 @@ class DCPCheckpointValidator(CheckpointValidator):
             referenced_files.add(info.relative_path)
 
         for ref_file in sorted(referenced_files):
-            ref_path = self._checkpoint_dir / ref_file
+            ref_path = _validate_shard_path(self._checkpoint_dir, ref_file)
             if not ref_path.exists():
                 flag = f"missing_shard:{ref_file}"
                 corruption_flags.append(flag)

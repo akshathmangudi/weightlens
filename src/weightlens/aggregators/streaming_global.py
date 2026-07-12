@@ -21,9 +21,9 @@ class StreamingGlobalAggregator(GlobalAggregator):
 
     def __init__(
         self,
-        histogram_bins: int = 2048,
-        histogram_min: float = -10.0,
-        histogram_max: float = 10.0,
+        histogram_bins: int = 4096,
+        histogram_min: float = -100.0,
+        histogram_max: float = 100.0,
     ) -> None:
         self._count = 0
         self._mean = 0.0
@@ -45,8 +45,8 @@ class StreamingGlobalAggregator(GlobalAggregator):
         if value_count == 0:
             return
 
-        batch_mean = float(np.mean(values))
-        batch_variance = float(np.var(values, ddof=0))
+        batch_mean = float(np.mean(values, dtype=np.float64))
+        batch_variance = float(np.var(values, ddof=0, dtype=np.float64))
         if not math.isfinite(batch_mean) or not math.isfinite(batch_variance):
             logger.error("Non-finite value encountered in global aggregation.")
             raise ValueError("Non-finite value encountered in global aggregation.")
@@ -63,6 +63,9 @@ class StreamingGlobalAggregator(GlobalAggregator):
         count: int,
         mean: float,
         variance: float,
+        histogram_counts: list[float] | None = None,
+        histogram_underflow: int = 0,
+        histogram_overflow: int = 0,
     ) -> None:
         """Accept pre-computed mean/variance to skip redundant array passes."""
         if count == 0:
@@ -71,7 +74,14 @@ class StreamingGlobalAggregator(GlobalAggregator):
             raise ValueError("Non-finite value encountered in global aggregation.")
 
         self._merge_batch(count, mean, variance * count)
-        self._quantiles.update(values)
+        if histogram_counts is not None:
+            self._quantiles.merge_histogram(
+                histogram_counts,
+                underflow=histogram_underflow,
+                overflow=histogram_overflow,
+            )
+        else:
+            self._quantiles.update(values)
         logger.debug("Updated global aggregator (from summary) count=%d.", self._count)
 
     def update_layer_stats(self, layer_stats: LayerStats) -> None:
@@ -82,6 +92,7 @@ class StreamingGlobalAggregator(GlobalAggregator):
             logger.error("Finalize called without any values.")
             raise ValueError("No values provided for global aggregation.")
         variance = self._m2 / self._count
+        variance = max(0.0, variance)
         layer_metrics = self._layer_metrics.finalize()
         stats = GlobalStats(
             mean=self._mean,

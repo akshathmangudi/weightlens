@@ -4,6 +4,7 @@ from collections.abc import Iterable
 
 from rich import box
 from rich.console import Console
+from rich.markup import escape
 from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
@@ -25,7 +26,9 @@ class RichReporter(Reporter):
 
     def render(self, result: AnalysisResult, filename: str) -> None:
         self._console.print()
-        self._console.print(f"Statistics for {filename}", style="bold underline")
+        self._console.print(
+            f"Statistics for {escape(filename)}", style="bold underline"
+        )
         self._console.print(Rule(style="dim"))
 
         self._console.print(self._build_health_section(result.health))
@@ -105,10 +108,13 @@ class RichReporter(Reporter):
 
         for flag in diagnostics_list:
             severity_style = "red bold" if flag.severity == "error" else "yellow"
+            # Wrap in Text() so checkpoint-controlled strings are rendered
+            # literally. A bare str is parsed as Rich markup; [bracketed]
+            # substrings are silently dropped.
             table.add_row(
                 Text(flag.severity, style=severity_style),
-                flag.rule,
-                flag.layer,
-                flag.message,
+                Text(flag.rule),
+                Text(flag.layer),
+                Text(flag.message),
             )
         self._console.print(table)

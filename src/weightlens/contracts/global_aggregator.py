@@ -25,6 +25,9 @@ class GlobalAggregator(ABC):
         count: int,
         mean: float,
         variance: float,
+        histogram_counts: list[float] | None = None,
+        histogram_underflow: int = 0,
+        histogram_overflow: int = 0,
     ) -> None:
         """Consume values with pre-computed summary statistics.
 

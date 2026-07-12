@@ -29,11 +29,19 @@ keywords = [
 ]
 
 [project.optional-dependencies]
+remote = ["fsspec>=2024.6.0"]
+s3 = ["fsspec>=2024.6.0", "s3fs>=2024.6.0"]
+gcs = ["fsspec>=2024.6.0", "gcsfs>=2024.6.0"]
 dev = [
     "pytest>=7.4",
     "ruff>=0.5",
     "mypy>=1.8",
-    "pyright>=1.1"
+    "pyright>=1.1",
+    "fsspec>=2024.6.0",
+    "safetensors>=0.4.0",
+    "moto[server]>=5.0.0",
+    "s3fs>=2024.6.0",
+    "gcsfs>=2024.6.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -43,9 +51,10 @@ where = ["src"]
 lens = "weightlens.cli:main"
 
 [tool.pytest.ini_options]
-addopts = "-ra"
+addopts = "-ra -m 'not integration'"
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = ["integration: opt-in tests that need extra services (run with -m integration)"]
 
 [tool.ruff]
 line-length = 88
@@ -67,6 +76,14 @@ files = ["src", "tests"]
 mypy_path = ["src"]
 explicit_package_bases = true
 
+[[tool.mypy.overrides]]
+module = "fsspec.*"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["boto3.*", "s3fs.*", "moto.*"]
+ignore_missing_imports = true
+
 [tool.pyright]
 include = ["src", "tests"]
 typeCheckingMode = "strict"
@@ -74,3 +91,9 @@ pythonVersion = "3.11"
 venvPath = "."
 venv = ".venv"
 reportMissingTypeStubs = "none"
+reportUnknownMemberType = "none"
+reportUnknownVariableType = "none"
+reportUnknownArgumentType = "none"
+reportPrivateUsage = "none"
+reportAttributeAccessIssue = "none"
+reportUnusedImport = "warning"

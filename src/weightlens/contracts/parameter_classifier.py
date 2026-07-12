@@ -16,7 +16,7 @@ class ParameterClassifier(ABC):
     ) -> ParameterCategory:
         """Return the category for a given parameter.
 
-        Classification is based on name, shape, and dtype only —
+        Classification is based on name, shape, and dtype only,
         never on tensor values (performance guarantee).
         """
         raise NotImplementedError

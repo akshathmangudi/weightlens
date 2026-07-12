@@ -21,6 +21,7 @@ from weightlens.contracts import (
 from weightlens.memory import compute_max_workers
 from weightlens.models import (
     AnalysisResult,
+    CheckpointHealth,
     DiagnosticFlag,
     LayerStats,
     LayerTensor,
@@ -93,11 +94,8 @@ class Analyzer:
     def _analyze_sequential(
         self,
         layer_stats_consumer: LayerStatsConsumer,
-        health: object,
+        health: CheckpointHealth,
     ) -> AnalysisResult:
-        from weightlens.models import CheckpointHealth
-
-        typed_health = cast(CheckpointHealth, health)
         bucket_aggregators: dict[str, StreamingGlobalAggregator] = {}
         diagnostics: list[DiagnosticFlag] = []
         layer_stats: list[LayerStats] = []
@@ -136,7 +134,13 @@ class Analyzer:
 
             try:
                 self._aggregator.update_from_summary(
-                    layer.values, count=count, mean=mean, variance=variance
+                    layer.values,
+                    count=count,
+                    mean=mean,
+                    variance=variance,
+                    histogram_counts=stats.histogram_counts,
+                    histogram_underflow=stats.histogram_underflow,
+                    histogram_overflow=stats.histogram_overflow,
                 )
             except ValueError:
                 logger.warning(
@@ -159,23 +163,26 @@ class Analyzer:
                 bucket_aggregators[category] = self._create_bucket_aggregator()
             bucket_agg = bucket_aggregators[category]
             bucket_agg.update_from_summary(
-                layer.values, count=count, mean=mean, variance=variance
+                layer.values,
+                count=count,
+                mean=mean,
+                variance=variance,
+                histogram_counts=stats.histogram_counts,
+                histogram_underflow=stats.histogram_underflow,
+                histogram_overflow=stats.histogram_overflow,
             )
             bucket_agg.update_layer_stats(stats)
 
         return self._finalize(
-            layer_stats, diagnostics, bucket_aggregators, typed_health
+            layer_stats, diagnostics, bucket_aggregators, health
         )
 
     def _analyze_parallel(
         self,
         layer_stats_consumer: LayerStatsConsumer,
-        health: object,
+        health: CheckpointHealth,
         num_workers: int,
     ) -> AnalysisResult:
-        from weightlens.models import CheckpointHealth
-
-        typed_health = cast(CheckpointHealth, health)
         bucket_aggregators: dict[str, StreamingGlobalAggregator] = {}
         diagnostics: list[DiagnosticFlag] = []
         layer_stats: list[LayerStats] = []
@@ -219,7 +226,7 @@ class Analyzer:
                 )
 
         return self._finalize(
-            layer_stats, diagnostics, bucket_aggregators, typed_health
+            layer_stats, diagnostics, bucket_aggregators, health
         )
 
     def _drain_one(
@@ -254,7 +261,13 @@ class Analyzer:
 
         try:
             self._aggregator.update_from_summary(
-                values, count=count, mean=mean, variance=variance
+                values,
+                count=count,
+                mean=mean,
+                variance=variance,
+                histogram_counts=stats.histogram_counts,
+                histogram_underflow=stats.histogram_underflow,
+                histogram_overflow=stats.histogram_overflow,
             )
         except ValueError:
             logger.warning(
@@ -277,7 +290,13 @@ class Analyzer:
             bucket_aggregators[category] = self._create_bucket_aggregator()
         bucket_agg = bucket_aggregators[category]
         bucket_agg.update_from_summary(
-            values, count=count, mean=mean, variance=variance
+            values,
+            count=count,
+            mean=mean,
+            variance=variance,
+            histogram_counts=stats.histogram_counts,
+            histogram_underflow=stats.histogram_underflow,
+            histogram_overflow=stats.histogram_overflow,
         )
         bucket_agg.update_layer_stats(stats)
 
@@ -286,11 +305,8 @@ class Analyzer:
         layer_stats: list[LayerStats],
         diagnostics: list[DiagnosticFlag],
         bucket_aggregators: dict[str, StreamingGlobalAggregator],
-        health: object,
+        health: CheckpointHealth,
     ) -> AnalysisResult:
-        from weightlens.models import CheckpointHealth
-
-        typed_health = cast(CheckpointHealth, health)
         global_stats = self._aggregator.finalize()
 
         bucket_stats = {cat: agg.finalize() for cat, agg in bucket_aggregators.items()}
@@ -312,5 +328,5 @@ class Analyzer:
             global_stats=global_stats,
             bucket_stats=bucket_stats,
             diagnostics=diagnostics,
-            health=typed_health,
+            health=health,
         )
