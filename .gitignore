@@ -17,3 +17,8 @@ scripts/
 .gsd/
 gsd/
 AGENTS.md
+
+# opencode artifacts
+.opencode/commands/
+.playwright-mcp/
+.DS_Store
