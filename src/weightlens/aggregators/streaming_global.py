@@ -58,7 +58,6 @@ class StreamingGlobalAggregator(GlobalAggregator):
 
     def update_from_summary(
         self,
-        values: NDArray[np.number],
         *,
         count: int,
         mean: float,
@@ -66,8 +65,15 @@ class StreamingGlobalAggregator(GlobalAggregator):
         histogram_counts: list[float] | None = None,
         histogram_underflow: int = 0,
         histogram_overflow: int = 0,
+        values: NDArray[np.number] | None = None,
     ) -> None:
-        """Accept pre-computed mean/variance to skip redundant array passes."""
+        """Accept pre-computed mean/variance to skip redundant array passes.
+
+        When *histogram_counts* is provided, the histogram path is used
+        and *values* is not needed.  When *histogram_counts* is *None*,
+        *values* must be supplied so that quantile estimates can be
+        updated from the raw array.
+        """
         if count == 0:
             return
         if not math.isfinite(mean) or not math.isfinite(variance):
@@ -81,6 +87,9 @@ class StreamingGlobalAggregator(GlobalAggregator):
                 overflow=histogram_overflow,
             )
         else:
+            assert values is not None, (
+                "values must be provided when histogram_counts is None"
+            )
             self._quantiles.update(values)
         logger.debug("Updated global aggregator (from summary) count=%d.", self._count)
 

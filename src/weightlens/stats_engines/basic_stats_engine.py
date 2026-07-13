@@ -31,10 +31,9 @@ class BasicStatsEngine(StatsEngine):
             logger.error("Layer %s contains NaN or Inf values.", layer.name)
             raise ValueError(f"Layer {layer.name} contains NaN values.")
 
-        flat = values.ravel().astype(np.float64, copy=False)
-        sum_sq = float(np.dot(flat, flat))
-        variance = float(np.var(flat, ddof=0))
+        variance = float(np.var(values, ddof=0, dtype=np.float64))
         variance = max(0.0, variance)
+        sum_sq = (variance + mean**2) * param_count
         std = float(np.sqrt(variance))
         l2_norm = float(np.sqrt(sum_sq))
         min_value = float(np.min(values))
@@ -44,11 +43,11 @@ class BasicStatsEngine(StatsEngine):
         p99_abs = self._compute_p99_abs(values)
 
         hist, _ = np.histogram(
-            flat, bins=_HISTOGRAM_BINS, range=(_HISTOGRAM_MIN, _HISTOGRAM_MAX)
+            values.ravel(), bins=_HISTOGRAM_BINS, range=(_HISTOGRAM_MIN, _HISTOGRAM_MAX)
         )
         histogram_counts = [float(c) for c in hist]
-        histogram_underflow = int(np.sum(flat < _HISTOGRAM_MIN))
-        histogram_overflow = int(np.sum(flat > _HISTOGRAM_MAX))
+        histogram_underflow = int(np.sum(values < _HISTOGRAM_MIN))
+        histogram_overflow = int(np.sum(values > _HISTOGRAM_MAX))
 
         logger.debug(
             "Computed stats for %s: mean=%.6f std=%.6f min=%.6f max=%.6f "

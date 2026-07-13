@@ -41,7 +41,7 @@ def test_update_from_summary_matches_update() -> None:
         count = int(arr.size)
         mean = float(np.mean(arr))
         variance = float(np.var(arr, ddof=0))
-        opt.update_from_summary(arr, count=count, mean=mean, variance=variance)
+        opt.update_from_summary(count=count, mean=mean, variance=variance, values=arr)
     for i, (s, n) in enumerate(zip(layer_stds, layer_norms, strict=True)):
         opt.update_layer_stats(_make_layer_stats(std=s, l2_norm=n, name=f"l{i}"))
     opt_stats = opt.finalize()
@@ -61,5 +61,5 @@ def test_update_from_summary_matches_update() -> None:
 def test_update_from_summary_skips_empty() -> None:
     agg = StreamingGlobalAggregator()
     empty = np.array([], dtype=np.float64)
-    agg.update_from_summary(empty, count=0, mean=0.0, variance=0.0)
+    agg.update_from_summary(count=0, mean=0.0, variance=0.0, values=empty)
     assert agg._count == 0
