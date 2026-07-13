@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import logging
 import pickle
 from collections.abc import Iterator, Mapping
@@ -131,6 +132,8 @@ class PyTorchCheckpointValidator(CheckpointValidator):
                 self._checkpoint_path,
                 health.model_dump(),
             )
+            del checkpoint
+            gc.collect()
             return health
 
         typed_checkpoint = _extract_state_dict(
@@ -193,6 +196,8 @@ class PyTorchCheckpointValidator(CheckpointValidator):
             self._checkpoint_path,
             health.model_dump(),
         )
+        del checkpoint, typed_checkpoint
+        gc.collect()
         return health
 
     @classmethod
