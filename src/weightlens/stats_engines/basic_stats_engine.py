@@ -42,9 +42,21 @@ class BasicStatsEngine(StatsEngine):
         sparsity = 1.0 - (nonzero_count / param_count)
         p99_abs = self._compute_p99_abs(values)
 
-        hist, _ = np.histogram(
-            values.ravel(), bins=_HISTOGRAM_BINS, range=(_HISTOGRAM_MIN, _HISTOGRAM_MAX)
-        )
+        try:
+            hist, _ = np.histogram(
+                values.ravel(),
+                bins=_HISTOGRAM_BINS,
+                range=(_HISTOGRAM_MIN, _HISTOGRAM_MAX),
+            )
+        except ValueError:
+            data_min = float(np.min(values))
+            data_max = float(np.max(values))
+            margin = max(1e-6, (data_max - data_min) * 0.01)
+            hist, _ = np.histogram(
+                values.ravel().astype(np.float32),
+                bins=min(_HISTOGRAM_BINS, param_count),
+                range=(data_min - margin, data_max + margin),
+            )
         histogram_counts = [float(c) for c in hist]
         histogram_underflow = int(np.sum(values < _HISTOGRAM_MIN))
         histogram_overflow = int(np.sum(values > _HISTOGRAM_MAX))
