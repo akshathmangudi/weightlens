@@ -42,6 +42,15 @@ def _load_checkpoint(path: Path) -> object:
         return torch.load(
             path, weights_only=True, map_location="cpu", mmap=True
         )
+    except RuntimeError as exc:
+        if "mmap can only be used with files saved" in str(exc):
+            logger.info(
+                "mmap not supported for %s, falling back to non-mmap load.", path
+            )
+            return torch.load(
+                path, weights_only=True, map_location="cpu", mmap=False
+            )
+        raise
     except pickle.UnpicklingError as exc:
         raise ValueError(
             f"Checkpoint {path} could not be loaded safely "
