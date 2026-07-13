@@ -271,7 +271,9 @@ def _run_analyze_safetensors(
         return 1
 
     analyzer = Analyzer(
-        source=SafetensorsWeightSource(uri, storage_options),
+        source=SafetensorsWeightSource(
+            uri, storage_options, use_mmap=("://" not in uri)
+        ),
         validator=StaticCheckpointValidator(health),
         stats_engine=BasicStatsEngine(),
         aggregator=StreamingGlobalAggregator(),

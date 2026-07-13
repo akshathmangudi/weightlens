@@ -176,9 +176,9 @@ def test_no_numpy_quantile_on_large_tensors() -> None:
     with patch("numpy.quantile", wraps=np.quantile) as spy:
         result = engine.compute_layer(layer)
         assert isinstance(result.p99_abs, float)
-    assert spy.call_count == 1, (
-        "np.quantile called once per compute_layer. "
-        "If this increases, the hot path regressed."
+    assert spy.call_count == 0, (
+        "np.quantile must not be called — histogram-based p99 is used instead. "
+        "If this is >0, the hot path regressed to O(n log n)."
     )
 
 
