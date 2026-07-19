@@ -22,3 +22,5 @@ AGENTS.md
 .opencode/commands/
 .playwright-mcp/
 .DS_Store
+.planning/
+demo/
