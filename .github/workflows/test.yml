@@ -8,14 +8,17 @@ on:
 
 jobs:
   quick:
-    name: "Lint + typecheck + unit tests"
+    name: "Lint + typecheck + unit tests (${{ matrix.python-version }})"
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
       - name: Install uv
         run: pip install uv
       - name: Install dependencies
@@ -45,7 +48,7 @@ jobs:
       - name: Performance + math tests
         run: uv run pytest tests/test_performance_regression.py tests/test_math_robustness.py tests/test_hardening_golden.py -v
 
-  integration:
+  integration-moto:
     name: "Integration tests (moto S3)"
     runs-on: ubuntu-latest
     steps:
@@ -60,3 +63,19 @@ jobs:
         run: uv sync --extra dev
       - name: Integration tests
         run: uv run pytest -m integration -v
+
+  integration-remote:
+    name: "Real endpoint smoke test (S3 + GCS)"
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: pip install uv
+      - name: Install dependencies
+        run: uv sync --extra dev
+      - name: Real remote smoke test
+        run: uv run pytest tests/test_remote_access.py -m integration -v

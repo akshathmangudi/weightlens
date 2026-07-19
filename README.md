@@ -7,6 +7,8 @@
 
 Analyze ML checkpoint weights without loading them into memory. Detect corrupted weights, dead layers, exploding variance, and statistical anomalies across PyTorch, Safetensors, and DCP checkpoints.
 
+![demo](demos/final.gif)
+
 ## Quick start
 
 ```bash
@@ -32,12 +34,15 @@ mean:                    3.722
 std:                     1929.327
 p99:                     0.048
 median_layer_variance:   0.000
+median_layer_norm:       0.019
 
 Diagnostics (2)
 ================================================================================
    Severity   Rule            Layer           Message
-   warn       exploding-var   conv2.weight    variance_ratio=37786784 >= 10.0
-   error      extreme-spike   conv2.weight    spike_ratio=1291406248 >= 100.0
+   warn       exploding-var   conv2.weight    variance_ratio=3.78e14 >= 10.0
+   error      extreme-spike   conv2.weight    spike_ratio=20682379 >= 100.0
+
+Health: FAILED — 1 error, 1 warning
 ```
 
 ## Why weightlens?
@@ -69,6 +74,7 @@ Time is I/O-bound on local NVMe. The Phi-2 result is a cold read across 2 safete
 - Memory bounded by chunk size (1M elements ~= 2-8 MB), not file or tensor size
 - Read safetensors from S3 or GCS via byte-range requests -- the checkpoint is never downloaded
 - Identical results across .pth, .safetensors, and DCP formats
+- Conservative diagnostic thresholds to avoid false-positives on typical architectures; per-rule threshold configuration planned for v0.3
 
 ## Formats
 
