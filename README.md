@@ -7,7 +7,7 @@
 
 Analyze ML checkpoint weights without loading them into memory. Detect corrupted weights, dead layers, exploding variance, and statistical anomalies across PyTorch, Safetensors, and DCP checkpoints.
 
-![demo](demos/final.gif)
+![demo](artifacts/final.gif)
 
 ## Quick start
 
@@ -17,7 +17,7 @@ lens analyze model.pth
 ```
 
 ```console
-$ lens analyze demo/checkpoints/corrupted_spike.pth
+$ lens analyze artifacts/checkpoints/corrupted_spike.pth
 
 Statistics for corrupted_spike.pth
 ================================================================================

@@ -1,7 +1,7 @@
 .PHONY: final clean
 
 final:
-	vhs demos/demo.tape
+	vhs artifacts/demo.tape
 
 clean:
-	rm -f demos/final.gif demos/demo.mp4
+	rm -f artifacts/final.gif artifacts/demo.mp4

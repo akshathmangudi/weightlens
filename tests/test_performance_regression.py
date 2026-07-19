@@ -435,7 +435,7 @@ def test_analyze_corrupted_checkpoint_completes_within_budget() -> None:
     from weightlens.stats_engines import BasicStatsEngine
     from weightlens.validators import PyTorchCheckpointValidator
 
-    cp = Path("demo/checkpoints/corrupted_spike.pth")
+    cp = Path("artifacts/checkpoints/corrupted_spike.pth")
 
     start = time.perf_counter()
     validator = PyTorchCheckpointValidator(cp)

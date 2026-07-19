@@ -1,4 +1,4 @@
-Output demos/final.gif
+Output artifacts/final.gif
 Set FontSize 18
 Set Width 900
 Set Height 500
@@ -18,12 +18,12 @@ Sleep 500ms
 Show
 
 Sleep 500ms
-Type "ls -lh demo/checkpoints/corrupted_spike.pth" Enter
+Type "ls -lh artifacts/checkpoints/corrupted_spike.pth" Enter
 Sleep 2.5s
 
 Ctrl+L
 Sleep 200ms
-Type "uv run lens analyze demo/checkpoints/corrupted_spike.pth" Enter
+Type "uv run lens analyze artifacts/checkpoints/corrupted_spike.pth" Enter
 Sleep 4s
 Sleep 2s
 Ctrl+L
