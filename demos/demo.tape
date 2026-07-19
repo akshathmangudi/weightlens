@@ -1,4 +1,4 @@
-Output artifacts/final.gif
+Output demos/final.gif
 Set FontSize 18
 Set Width 900
 Set Height 500
