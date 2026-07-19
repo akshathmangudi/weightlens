@@ -2,13 +2,12 @@ from __future__ import annotations
 
 import io
 import logging
-import os
 import pickle
 import warnings
 from collections import defaultdict
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import torch
 
@@ -42,36 +41,6 @@ def find_metadata_path(checkpoint_dir: str | Path) -> Path:
         f"No metadata file found in {checkpoint_dir}. "
         f"Looked for: {', '.join(_METADATA_FILENAMES)}"
     )
-
-
-def make_reader(checkpoint_dir: str | Path) -> Any:
-    """Build a ``FileSystemReader`` that can handle both naming conventions.
-
-    If the directory uses the non-standard ``metadata`` filename, the reader
-    is patched so that ``read_metadata()`` finds it.
-    """
-    from torch.distributed.checkpoint.filesystem import FileSystemReader
-
-    checkpoint_dir = Path(checkpoint_dir)
-    meta_path = find_metadata_path(checkpoint_dir)
-    reader = FileSystemReader(str(checkpoint_dir))
-
-    if meta_path.name != ".metadata":
-        actual_name = meta_path.name
-
-        def _patched_get_metadata_path(
-            rank: int | None = None,
-        ) -> os.PathLike[str]:
-            filename = actual_name if rank is None else f"__{rank}{actual_name}"
-            return cast(Path, reader.fs.concat_path(reader.path, filename))
-
-        reader._get_metadata_path = _patched_get_metadata_path  # type: ignore[method-assign]
-        logger.debug(
-            "Patched FileSystemReader to use non-standard metadata filename %r.",
-            actual_name,
-        )
-
-    return reader
 
 
 _UNSAFE_MODULES = frozenset({
@@ -114,21 +83,12 @@ class _SafeMetadataUnpickler(pickle.Unpickler):
 
 
 def read_metadata(checkpoint_dir: str | Path) -> Any:
-    """Read DCP metadata with fault-tolerant unpickling.
+    """Read DCP metadata through the safety-filtered unpickler.
 
-    Falls back to a :class:`_SafeMetadataUnpickler` when the standard
-    ``reader.read_metadata()`` raises due to missing third-party
-    modules (e.g. ``megatron.core``).
-
-    Note: the primary path delegates to ``reader.read_metadata()`` which
-    uses torch's internal pickle loader — we cannot control its unpickling
-    policy.  The fallback path uses our whitelist-based safe unpickler.
+    Blocks dangerous modules (os, subprocess, etc.) and stubs
+    missing third-party classes so checkpoints created by
+    frameworks like Megatron-LM can still be loaded.
     """
-    reader = make_reader(checkpoint_dir)
-    try:
-        return reader.read_metadata()
-    except (ModuleNotFoundError, AttributeError):
-        logger.info("Standard metadata read failed; retrying with tolerant unpickler.")
     meta_path = find_metadata_path(checkpoint_dir)
     with open(meta_path, "rb") as f:
         return _SafeMetadataUnpickler(f).load()

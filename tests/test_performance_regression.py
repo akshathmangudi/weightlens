@@ -176,9 +176,9 @@ def test_no_numpy_quantile_on_large_tensors() -> None:
     with patch("numpy.quantile", wraps=np.quantile) as spy:
         result = engine.compute_layer(layer)
         assert isinstance(result.p99_abs, float)
-    assert spy.call_count == 1, (
-        "np.quantile called once per compute_layer. "
-        "If this increases, the hot path regressed."
+    assert spy.call_count == 0, (
+        "np.quantile must not be called — histogram-based p99 is used instead. "
+        "If this is >0, the hot path regressed to O(n log n)."
     )
 
 
@@ -427,3 +427,33 @@ def test_all_three_formats_produce_identical_layer_stats(tmp_path: Path) -> None
         dcp_result.global_stats.std,
         atol=1e-6,
     )
+
+
+def test_analyze_corrupted_checkpoint_completes_within_budget() -> None:
+    from weightlens.cli import StaticCheckpointValidator
+    from weightlens.sources import PyTorchWeightSource
+    from weightlens.stats_engines import BasicStatsEngine
+    from weightlens.validators import PyTorchCheckpointValidator
+
+    cp = Path("demo/checkpoints/corrupted_spike.pth")
+
+    start = time.perf_counter()
+    validator = PyTorchCheckpointValidator(cp)
+    health = validator.validate()
+    analyzer = Analyzer(
+        source=PyTorchWeightSource(cp),
+        validator=StaticCheckpointValidator(health),
+        stats_engine=BasicStatsEngine(),
+        aggregator=StreamingGlobalAggregator(),
+        rules=[
+            DeadLayerRule(),
+            ExplodingVarianceRule(),
+            ExtremeSpikeRule(),
+            AbnormalNormRule(),
+        ],
+        classifier=PyTorchParameterClassifier(),
+    )
+    analyzer.analyze()
+    elapsed = time.perf_counter() - start
+
+    assert elapsed < 3.0, f"Analysis took {elapsed:.1f}s, budget is 3.0s"

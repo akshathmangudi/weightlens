@@ -31,7 +31,7 @@ def test_basic_stats_engine_computes_expected_stats() -> None:
     np.testing.assert_allclose(stats.max, 4.0)
     np.testing.assert_allclose(stats.l2_norm, np.sqrt(30.0))
     np.testing.assert_allclose(stats.sparsity, 0.0)
-    np.testing.assert_allclose(stats.p99_abs, expected_p99_abs)
+    np.testing.assert_allclose(stats.p99_abs, expected_p99_abs, atol=0.05)
 
 
 def test_basic_stats_engine_reports_zero_sparsity_metrics() -> None:

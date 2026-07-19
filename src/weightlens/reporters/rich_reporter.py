@@ -5,6 +5,7 @@ from collections.abc import Iterable
 from rich import box
 from rich.console import Console
 from rich.markup import escape
+from rich.panel import Panel
 from rich.rule import Rule
 from rich.table import Table
 from rich.text import Text
@@ -92,29 +93,61 @@ class RichReporter(Reporter):
 
         if not diagnostics_list:
             self._console.print("[dim]None[/dim]")
-            return
-
-        table = Table(
-            box=box.SIMPLE_HEAD,
-            show_header=True,
-            header_style="bold",
-            expand=True,
-            padding=(0, 2),
-        )
-        table.add_column("Severity", ratio=1)
-        table.add_column("Rule", ratio=2)
-        table.add_column("Layer", ratio=4)
-        table.add_column("Message", ratio=4)
-
-        for flag in diagnostics_list:
-            severity_style = "red bold" if flag.severity == "error" else "yellow"
-            # Wrap in Text() so checkpoint-controlled strings are rendered
-            # literally. A bare str is parsed as Rich markup; [bracketed]
-            # substrings are silently dropped.
-            table.add_row(
-                Text(flag.severity, style=severity_style),
-                Text(flag.rule),
-                Text(flag.layer),
-                Text(flag.message),
+        else:
+            table = Table(
+                box=box.SIMPLE_HEAD,
+                show_header=True,
+                header_style="bold",
+                expand=True,
+                padding=(0, 2),
             )
-        self._console.print(table)
+            table.add_column("Severity", ratio=1)
+            table.add_column("Rule", ratio=2)
+            table.add_column("Layer", ratio=4)
+            table.add_column("Message", ratio=4)
+
+            for flag in diagnostics_list:
+                severity_style = (
+                    "red bold" if flag.severity == "error" else "yellow"
+                )
+                table.add_row(
+                    Text(flag.severity, style=severity_style),
+                    Text(flag.rule),
+                    Text(flag.layer),
+                    Text(flag.message),
+                )
+            self._console.print(table)
+
+        self._console.print()
+        self._console.print(self._build_summary(diagnostics_list))
+
+    @staticmethod
+    def _build_summary(diagnostics: list[DiagnosticFlag]) -> Panel:
+        errors = sum(1 for d in diagnostics if d.severity == "error")
+        warns = sum(1 for d in diagnostics if d.severity == "warn")
+
+        if errors > 0:
+            parts = [f"{errors} error{'s' if errors != 1 else ''}"]
+            if warns > 0:
+                parts.append(
+                    f"{warns} warning{'s' if warns != 1 else ''}"
+                )
+            return Panel(
+                ", ".join(parts),
+                style="red bold",
+                title="FAILED",
+                title_align="left",
+            )
+        if warns > 0:
+            return Panel(
+                f"{warns} warning{'s' if warns != 1 else ''}",
+                style="yellow",
+                title="WARNINGS",
+                title_align="left",
+            )
+        return Panel(
+            "No issues detected",
+            style="green",
+            title="PASSED",
+            title_align="left",
+        )

@@ -89,6 +89,30 @@ def _build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Use anonymous access for remote reads (public buckets)",
     )
+    analyze.add_argument(
+        "--variance-threshold",
+        type=float,
+        default=10.0,
+        help="Variance ratio for exploding-variance detection (default: 10.0)",
+    )
+    analyze.add_argument(
+        "--spike-threshold",
+        type=float,
+        default=100.0,
+        help="max_abs/p99_abs for extreme-spike detection (default: 100.0)",
+    )
+    analyze.add_argument(
+        "--norm-threshold",
+        type=float,
+        default=5.0,
+        help="IQR z-score for abnormal-norm detection (default: 5.0)",
+    )
+    analyze.add_argument(
+        "--sparsity-threshold",
+        type=float,
+        default=0.9999,
+        help="Zero-fraction for dead-layer detection (default: 0.9999)",
+    )
     return parser
 
 
@@ -167,6 +191,10 @@ def _run_analyze_pytorch(
     *,
     console: Console,
     num_workers: int | None = None,
+    variance_threshold: float = 10.0,
+    spike_threshold: float = 100.0,
+    norm_threshold: float = 5.0,
+    sparsity_threshold: float = 0.9999,
 ) -> int:
     validator = PyTorchCheckpointValidator(checkpoint_path)
     try:
@@ -186,10 +214,10 @@ def _run_analyze_pytorch(
         stats_engine=BasicStatsEngine(),
         aggregator=StreamingGlobalAggregator(),
         rules=[
-            DeadLayerRule(),
-            ExplodingVarianceRule(),
-            ExtremeSpikeRule(),
-            AbnormalNormRule(),
+            DeadLayerRule(threshold=sparsity_threshold),
+            ExplodingVarianceRule(threshold=variance_threshold),
+            ExtremeSpikeRule(threshold=spike_threshold),
+            AbnormalNormRule(threshold=norm_threshold),
         ],
         classifier=PyTorchParameterClassifier(),
         num_workers=num_workers,
@@ -207,6 +235,10 @@ def _run_analyze_dcp(
     console: Console,
     include_optimizer: bool = False,
     num_workers: int | None = None,
+    variance_threshold: float = 10.0,
+    spike_threshold: float = 100.0,
+    norm_threshold: float = 5.0,
+    sparsity_threshold: float = 0.9999,
 ) -> int:
     from weightlens.sources.dcp import DCPWeightSource
     from weightlens.validators.dcp_checkpoint import DCPCheckpointValidator
@@ -236,10 +268,10 @@ def _run_analyze_dcp(
             stats_engine=BasicStatsEngine(),
             aggregator=StreamingGlobalAggregator(),
             rules=[
-                DeadLayerRule(),
-                ExplodingVarianceRule(),
-                ExtremeSpikeRule(),
-                AbnormalNormRule(),
+                DeadLayerRule(threshold=sparsity_threshold),
+                ExplodingVarianceRule(threshold=variance_threshold),
+                ExtremeSpikeRule(threshold=spike_threshold),
+                AbnormalNormRule(threshold=norm_threshold),
             ],
             classifier=DCPParameterClassifier(include_optimizer=include_optimizer),
             num_workers=num_workers,
@@ -257,6 +289,10 @@ def _run_analyze_safetensors(
     console: Console,
     num_workers: int | None = None,
     storage_options: dict[str, object] | None = None,
+    variance_threshold: float = 10.0,
+    spike_threshold: float = 100.0,
+    norm_threshold: float = 5.0,
+    sparsity_threshold: float = 0.9999,
 ) -> int:
     validator = SafetensorsCheckpointValidator(uri, storage_options)
     try:
@@ -271,15 +307,17 @@ def _run_analyze_safetensors(
         return 1
 
     analyzer = Analyzer(
-        source=SafetensorsWeightSource(uri, storage_options),
+        source=SafetensorsWeightSource(
+            uri, storage_options, use_mmap=("://" not in uri)
+        ),
         validator=StaticCheckpointValidator(health),
         stats_engine=BasicStatsEngine(),
         aggregator=StreamingGlobalAggregator(),
         rules=[
-            DeadLayerRule(),
-            ExplodingVarianceRule(),
-            ExtremeSpikeRule(),
-            AbnormalNormRule(),
+            DeadLayerRule(threshold=sparsity_threshold),
+            ExplodingVarianceRule(threshold=variance_threshold),
+            ExtremeSpikeRule(threshold=spike_threshold),
+            AbnormalNormRule(threshold=norm_threshold),
         ],
         classifier=PyTorchParameterClassifier(),
         num_workers=num_workers,
@@ -296,6 +334,10 @@ def _run_analyze(
     include_optimizer: bool = False,
     num_workers: int | None = None,
     anon: bool = False,
+    variance_threshold: float = 10.0,
+    spike_threshold: float = 100.0,
+    norm_threshold: float = 5.0,
+    sparsity_threshold: float = 0.9999,
     console: Console | None,
 ) -> int:
     out_console = console or Console()
@@ -309,6 +351,10 @@ def _run_analyze(
                 console=out_console,
                 num_workers=num_workers,
                 storage_options=storage_options,
+                variance_threshold=variance_threshold,
+                spike_threshold=spike_threshold,
+                norm_threshold=norm_threshold,
+                sparsity_threshold=sparsity_threshold,
             )
         if resolved_fmt == "dcp":
             return _run_analyze_dcp(
@@ -316,13 +362,23 @@ def _run_analyze(
                 console=out_console,
                 include_optimizer=include_optimizer,
                 num_workers=num_workers,
+                variance_threshold=variance_threshold,
+                spike_threshold=spike_threshold,
+                norm_threshold=norm_threshold,
+                sparsity_threshold=sparsity_threshold,
             )
         local_path = (
             materialize(target, storage_options) if is_remote(target)
             else Path(target)
         )
         return _run_analyze_pytorch(
-            local_path, console=out_console, num_workers=num_workers
+            local_path,
+            console=out_console,
+            num_workers=num_workers,
+            variance_threshold=variance_threshold,
+            spike_threshold=spike_threshold,
+            norm_threshold=norm_threshold,
+            sparsity_threshold=sparsity_threshold,
         )
     except MissingBackendError as exc:
         out_console.print(f"[red]{escape(str(exc))}[/red]")
@@ -361,6 +417,10 @@ def run_cli(
             include_optimizer=args.include_optimizer,
             num_workers=args.num_workers,
             anon=args.anon,
+            variance_threshold=args.variance_threshold,
+            spike_threshold=args.spike_threshold,
+            norm_threshold=args.norm_threshold,
+            sparsity_threshold=args.sparsity_threshold,
             console=console,
         )
     parser.error("Unknown command.")

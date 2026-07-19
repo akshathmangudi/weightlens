@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gc
 import logging
 import pickle
 from collections.abc import Iterator, Mapping
@@ -42,6 +43,15 @@ def _load_checkpoint(path: Path) -> object:
         return torch.load(
             path, weights_only=True, map_location="cpu", mmap=True
         )
+    except RuntimeError as exc:
+        if "mmap can only be used with files saved" in str(exc):
+            logger.info(
+                "mmap not supported for %s, falling back to non-mmap load.", path
+            )
+            return torch.load(
+                path, weights_only=True, map_location="cpu", mmap=False
+            )
+        raise
     except pickle.UnpicklingError as exc:
         raise ValueError(
             f"Checkpoint {path} could not be loaded safely "
@@ -122,6 +132,8 @@ class PyTorchCheckpointValidator(CheckpointValidator):
                 self._checkpoint_path,
                 health.model_dump(),
             )
+            del checkpoint
+            gc.collect()
             return health
 
         typed_checkpoint = _extract_state_dict(
@@ -184,6 +196,8 @@ class PyTorchCheckpointValidator(CheckpointValidator):
             self._checkpoint_path,
             health.model_dump(),
         )
+        del checkpoint, typed_checkpoint
+        gc.collect()
         return health
 
     @classmethod

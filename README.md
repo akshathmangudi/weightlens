@@ -1,74 +1,121 @@
 # weightlens
-Weightlens is an analysis tool for checkpoint weights.
 
-## What it solves
-- Corruption detection (empty / partial failures, tensor access failures and NaN/zero floods)
-- Per-layer metrics (mean, std, min/max, L2 norm, sparsity and p99 absolute)
-- Global distribution stats, streamed to avoid OOM and memory crashes.
-- Deterministic diagnostics for unhealthy layers.
+[![PyPI version](https://img.shields.io/pypi/v/weightlens.svg)](https://pypi.org/project/weightlens/)
+[![CI](https://github.com/akshathmangudi/weightlens/actions/workflows/test.yml/badge.svg)](https://github.com/akshathmangudi/weightlens/actions)
+[![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg)]()
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## What's next?
-- [x] Improve diagnostics by bucketing components and softening constraints (bias, weights, norm_params, etc.)
-- [ ] Integrate checkpoint diffing: compare regressions, drift, and training failures between two or more checkpoints
-- [ ] Extend Weightlens for `h5`, `safetensors`, `joblib`, etc. (DCP has been covered from a user request.)
-- [ ] Research on deeper failure modes and detecting them accurately.
+Analyze ML checkpoint weights without loading them into memory. Detect corrupted weights, dead layers, exploding variance, and statistical anomalies across PyTorch, Safetensors, and DCP checkpoints.
+
+![demo](demos/final.gif)
+
+## Quick start
+
+```bash
+pip install weightlens
+lens analyze model.pth
+```
+
+```console
+$ lens analyze demo/checkpoints/corrupted_spike.pth
+
+Statistics for corrupted_spike.pth
+================================================================================
+file_size_bytes:    1,078,077
+loadable:           true
+is_empty:           false
+tensor_count:       8
+total_params:       268,650
+corruption_flags:   none
+
+Global Stats
+================================================================================
+mean:                    3.722
+std:                     1929.327
+p99:                     0.048
+median_layer_variance:   0.000
+median_layer_norm:       0.019
+
+Diagnostics (2)
+================================================================================
+   Severity   Rule            Layer           Message
+   warn       exploding-var   conv2.weight    variance_ratio=3.78e14 >= 10.0
+   error      extreme-spike   conv2.weight    spike_ratio=20682379 >= 100.0
+
+FAILED — 1 error, 1 warning
+```
+
+## Why weightlens?
+
+`torch.load()` deserializes the entire checkpoint into memory before you can inspect a single tensor — there is no way to ask "are these weights valid?" without paying the full memory cost first.
+
+Weightlens separates inspection from loading. Instead of deserializing everything, it streams tensors one at a time through a one-pass statistics pipeline. For safetensors, the file is memory-mapped directly — tensor data is never copied into a buffer. Statistics are computed via Welford's online algorithm in 1M-element chunks: the peak RSS for any checkpoint is bounded by chunk size, not checkpoint size.
+
+Safetensors checkpoints are byte-ranged directly from S3/GCS — only tensor bytes are fetched, the file is never downloaded. PyTorch checkpoints are downloaded to a local cache first, then streamed through the same chunked pipeline. Format detection and format-specific streaming are automatic.
 
 ## Performance
 
-Benchmarked on an ultrabook (Intel 4-core, 8GB LPDDR3, SATA SSD ~500 MB/s):
+Benchmarked on a MacBook M-series with NVMe SSD. All numbers measured with `/usr/bin/time -l` on real model checkpoints.
 
-| Checkpoint | Format | Size | Tensors | Params | Wall time |
-|---|---|---|---|---|---|
-| BEiT-3 training checkpoint | `.pth` | 8 GB | 977 | 676M | ~29s |
-| Mixtral MoE (multi-shard) | DCP | 70 GB | 456 | 20B | ~293s |
+| Checkpoint | Format | Size | Tensors | Params | Time | Peak RSS |
+|-----------|--------|------|---------|--------|------|-----------|
+| ToyNet (demo) | .pth | 1 MB | 8 | 269K | 0.5s | 237 MB |
+| SqueezeNet 1.1 | .pth | 5 MB | 52 | 1.2M | 0.6s | 237 MB |
+| ResNet-18 | .pth | 45 MB | 102 | 11.7M | 0.8s | 324 MB |
+| VGG-19 | .pth | 548 MB | 38 | 143.7M | 1.7s | 940 MB |
+| Phi-2 | .index.json (sharded) | 5.6 GB | 453 | 2.8B | 28.6s | 659 MB |
 
-Performance is I/O-bound on SATA SSDs. On NVMe storage (3-7 GB/s), expect roughly proportional speedups. The `--num-workers` flag enables parallel stats computation which helps when I/O is not the bottleneck.
+Time is I/O-bound on local NVMe. The Phi-2 result is a cold read across 2 safetensors shards; in benchmarks, peak RSS remained constant at ~659 MB regardless of file size due to memory-mapped tensor views and chunked processing. Remote first-run times include credential chain resolution. `--num-workers` parallelizes stats computation on larger models.
 
-## To use
-Simply run `pip install weightlens` into your virtual environment and start by running:
+## Features
+
+- Detect dead layers (99.99%+ zeros), NaN floods, extreme spikes (100x above p99), exploding variance (10x above median), abnormal norms (5 IQR-scaled deviations from median)
+- Stream one tensor at a time through chunked one-pass statistics: Welford variance, incremental histogram, histogram-based p99
+- Memory bounded by chunk size (1M elements ~= 2-8 MB), not file or tensor size
+- Read safetensors from S3 or GCS via byte-range requests -- the checkpoint is never downloaded
+- Identical results across .pth, .safetensors, and DCP formats
+- Conservative diagnostic thresholds to avoid false-positives on typical architectures; thresholds are configurable per rule via `--variance-threshold`, `--spike-threshold`, `--norm-threshold`, `--sparsity-threshold`
+
+## Formats
+
+| Format | Extension | Remote | Loading |
+|--------|----------|--------|---------|
+| PyTorch | .pth, .pt | Download to cache | Pickle deserialization + chunked stats |
+| Safetensors | .safetensors | Byte-range | Memory-mapped views |
+| Safetensors sharded | .index.json | Byte-range | Memory-mapped views per shard |
+| DCP | directory | Offline | Byte-offset reads from shard files |
 
 ```bash
-lens analyze <filename>.pth
-lens analyze <dcp_directory> --format dcp
-lens analyze <checkpoint>.pth --num-workers 2
+lens analyze model.pth
+lens analyze model.safetensors
+lens analyze model.safetensors.index.json
+lens analyze checkpoint_dir --format dcp
 ```
 
-## Remote checkpoints (safetensors)
-
-Analyze checkpoints straight from object storage. Only tensor bytes are fetched, nothing is downloaded or consolidated:
+Remote checkpoints use your existing AWS or GCS credentials. PyTorch CDN URLs are downloaded to a local cache first. Safetensors URLs use byte-range reads when the server supports Range headers:
 
 ```bash
-pip install weightlens[s3]     # or [gcs], or [remote] for local fsspec only
-
+pip install weightlens[remote]
+lens analyze https://download.pytorch.org/models/resnet18-f37072fd.pth
 lens analyze s3://bucket/model.safetensors
-lens analyze s3://bucket/model.safetensors.index.json   # sharded
+lens analyze s3://bucket/model.safetensors.index.json
 lens analyze gs://bucket/model.safetensors
 ```
 
-Credentials use your existing AWS/GCS credential chain (env vars, `~/.aws/...`, instance roles). Weightlens stores no secrets. Remote `.pth` is supported via download-to-cache (`.pth` cannot be byte-ranged).
+## Install
 
-## Demo: corrupted checkpoints
-Generate a clean checkpoint and two corrupted variants, then compare manual loading
-versus Weightlens diagnostics.
+Python 3.11 or later.
 
 ```bash
-python demo/make_clean_ckpt.py
-python demo/corrupt_ckpt.py
-
-lens analyze demo/checkpoints/clean.pth
-lens analyze demo/checkpoints/corrupted_zero.pth
-lens analyze demo/checkpoints/corrupted_spike.pth
+pip install weightlens
+pip install weightlens[s3]     # AWS S3
+pip install weightlens[gcs]    # Google Cloud Storage
 ```
 
-If `lens` is not on your PATH, use `python -m weightlens.cli analyze ...` instead.
+## Security
 
-## Contributing
-1. Clone this repo.
-2. Set up a virtual environment. The standard is uv (no `requirements.txt`).
-3. Run `uv pip install -e .[dev]`
-4. Start contributing.
+DCP metadata pickles are loaded through a blocklist-based unpickler that stubs dangerous modules. PyTorch loading uses `weights_only=True` with no unsafe fallback; old-format .pth files that reject mmap fall back to non-mmap load (not unsafe unpickling). Path traversal is blocked in shard filenames for DCP and safetensors. Byte-range reads verify returned length. Remote downloads are capped at 50 GB.
 
-If you would like to contribute, please do create Pull Requests.
+## License
 
-## Final Notes
-This library is not perfect and is actively developed.
+MIT

@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 class DeadLayerRule(DiagnosticRule):
     """Detect layers with near-total exact zeros."""
 
+    def __init__(self, threshold: float = 0.9999) -> None:
+        self._threshold = threshold
+
     @property
     def severity(self) -> Literal["info", "warn", "error"]:
         return "error"
@@ -29,11 +32,11 @@ class DeadLayerRule(DiagnosticRule):
     ) -> DiagnosticFlag | None:
         _ = global_stats
         dead_fraction = layer.sparsity
-        if dead_fraction >= 0.9999:
+        if dead_fraction >= self._threshold:
             flag = DiagnosticFlag(
                 layer=layer.name,
                 rule="dead-layer",
-                message=f"dead_fraction={dead_fraction:.6f} >= 0.9999",
+                message=f"dead_fraction={dead_fraction:.6f} >= {self._threshold}",
                 severity=self.severity,
             )
             logger.debug(
@@ -48,6 +51,9 @@ class DeadLayerRule(DiagnosticRule):
 
 class ExplodingVarianceRule(DiagnosticRule):
     """Detect layers with variance far above the median variance."""
+
+    def __init__(self, threshold: float = 10.0) -> None:
+        self._threshold = threshold
 
     @property
     def severity(self) -> Literal["info", "warn", "error"]:
@@ -77,11 +83,11 @@ class ExplodingVarianceRule(DiagnosticRule):
             return None
 
         ratio = variance / median_variance
-        if ratio >= 10.0:
+        if ratio >= self._threshold:
             flag = DiagnosticFlag(
                 layer=layer.name,
                 rule="exploding-variance",
-                message=f"variance_ratio={ratio:.3f} >= 10.0",
+                message=f"variance_ratio={ratio:.3f} >= {self._threshold}",
                 severity=self.severity,
             )
             logger.debug(
@@ -96,6 +102,9 @@ class ExplodingVarianceRule(DiagnosticRule):
 
 class ExtremeSpikeRule(DiagnosticRule):
     """Detect extreme max spikes relative to the 99th percentile scale."""
+
+    def __init__(self, threshold: float = 100.0) -> None:
+        self._threshold = threshold
 
     @property
     def severity(self) -> Literal["info", "warn", "error"]:
@@ -126,11 +135,11 @@ class ExtremeSpikeRule(DiagnosticRule):
             return None
 
         ratio = max_abs / p99_abs
-        if ratio >= 100.0:
+        if ratio >= self._threshold:
             flag = DiagnosticFlag(
                 layer=layer.name,
                 rule="extreme-spike",
-                message=f"spike_ratio={ratio:.3f} >= 100.0",
+                message=f"spike_ratio={ratio:.3f} >= {self._threshold}",
                 severity=self.severity,
             )
             logger.debug(
@@ -145,6 +154,9 @@ class ExtremeSpikeRule(DiagnosticRule):
 
 class AbnormalNormRule(DiagnosticRule):
     """Detect norms far from the median using IQR scaling."""
+
+    def __init__(self, threshold: float = 5.0) -> None:
+        self._threshold = threshold
 
     @property
     def severity(self) -> Literal["info", "warn", "error"]:
@@ -177,11 +189,11 @@ class AbnormalNormRule(DiagnosticRule):
             return None
 
         z_score = (norm - median_norm) / iqr_norm
-        if abs(z_score) >= 5.0:
+        if abs(z_score) >= self._threshold:
             flag = DiagnosticFlag(
                 layer=layer.name,
                 rule="abnormal-norm",
-                message=f"norm_z_score={z_score:.3f} exceeds +/-5.0",
+                message=f"norm_z_score={z_score:.3f} exceeds +/-{self._threshold}",
                 severity=self.severity,
             )
             logger.debug(

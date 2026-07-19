@@ -20,7 +20,6 @@ class GlobalAggregator(ABC):
 
     def update_from_summary(
         self,
-        values: NDArray[np.number],
         *,
         count: int,
         mean: float,
@@ -28,13 +27,18 @@ class GlobalAggregator(ABC):
         histogram_counts: list[float] | None = None,
         histogram_underflow: int = 0,
         histogram_overflow: int = 0,
+        values: NDArray[np.number] | None = None,
     ) -> None:
         """Consume values with pre-computed summary statistics.
 
         Implementations may use *count*, *mean* and *variance* to skip
-        redundant recomputation.  The default falls back to :meth:`update`.
+        redundant recomputation.  When *histogram_counts* is *None* the
+        caller must supply *values* so the implementation can derive
+        quantile estimates from the raw array.  The default falls back
+        to :meth:`update`, ignoring the new parameters.
         """
-        self.update(values)
+        if values is not None:
+            self.update(values)
 
     @abstractmethod
     def finalize(self) -> GlobalStats:
