@@ -42,7 +42,7 @@ Diagnostics (2)
    warn       exploding-var   conv2.weight    variance_ratio=3.78e14 >= 10.0
    error      extreme-spike   conv2.weight    spike_ratio=20682379 >= 100.0
 
-Health: FAILED — 1 error, 1 warning
+FAILED — 1 error, 1 warning
 ```
 
 ## Why weightlens?
@@ -74,7 +74,7 @@ Time is I/O-bound on local NVMe. The Phi-2 result is a cold read across 2 safete
 - Memory bounded by chunk size (1M elements ~= 2-8 MB), not file or tensor size
 - Read safetensors from S3 or GCS via byte-range requests -- the checkpoint is never downloaded
 - Identical results across .pth, .safetensors, and DCP formats
-- Conservative diagnostic thresholds to avoid false-positives on typical architectures; per-rule threshold configuration planned for v0.3
+- Conservative diagnostic thresholds to avoid false-positives on typical architectures; thresholds are configurable per rule via `--variance-threshold`, `--spike-threshold`, `--norm-threshold`, `--sparsity-threshold`
 
 ## Formats
 
