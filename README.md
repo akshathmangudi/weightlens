@@ -7,7 +7,7 @@
 
 Analyze ML checkpoint weights without loading them into memory. Detect corrupted weights, dead layers, exploding variance, and statistical anomalies across PyTorch, Safetensors, and DCP checkpoints.
 
-![demo](demos/final.gif)
+![demo](https://raw.githubusercontent.com/akshathmangudi/weightlens/main/demos/final.gif)
 
 ## Quick start
 
