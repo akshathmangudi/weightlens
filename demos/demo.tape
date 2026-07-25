@@ -13,7 +13,7 @@ Set Framerate 30
 Env FORCE_COLOR "1"
 
 Hide
-Type "cd /Users/akshath/dev/weightlens && clear" Enter
+Type "clear" Enter
 Sleep 500ms
 Show
 
