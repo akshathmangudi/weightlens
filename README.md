@@ -5,7 +5,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Analyze ML checkpoint weights without loading them into memory. Detect corrupted weights, dead layers, exploding variance, and statistical anomalies across PyTorch, Safetensors, and DCP checkpoints.
+Analyze ML checkpoint weights one tensor at a time. Detect corrupted weights, dead layers, exploding variance, and statistical anomalies across PyTorch, Safetensors, and DCP checkpoints.
 
 ![demo](https://raw.githubusercontent.com/akshathmangudi/weightlens/main/demos/final.gif)
 
@@ -32,8 +32,8 @@ Global Stats
 ================================================================================
 mean:                    3.722
 std:                     1929.327
-p99:                     0.048
-median_layer_variance:   0.000
+p99:                     0.000117969
+median_layer_variance:   9.45793e-07
 median_layer_norm:       0.019
 
 Diagnostic thresholds
@@ -46,8 +46,8 @@ Diagnostic thresholds
 Diagnostics (2)
 ================================================================================
    Severity   Rule            Layer           Message
-   warn       exploding-var   conv2.weight    variance_ratio=3.78e14 >= 10.0
-   error      extreme-spike   conv2.weight    spike_ratio=20682379 >= 100.0
+   warn       exploding-var   conv2.weight    variance_ratio=3.78e6 >= 10.0
+   error      extreme-spike   conv2.weight    spike_ratio=1.29e9 >= 100.0
 
 FAILED — 1 error, 1 warning
 ```
@@ -60,7 +60,7 @@ PASSED means that no rule crossed its cutoff. It does not establish model qualit
 
 `torch.load()` deserializes the entire checkpoint into memory. You cannot inspect a single tensor without paying the full memory cost first.
 
-Weightlens reads tensors one at a time. Local F16, F32, and F64 safetensors use memory-mapped views. Local BF16 tensors are decoded to F32 one tensor at a time. Statistics run through Welford's online algorithm in 1M-element chunks.
+Weightlens reads tensors one at a time. Local F16, F32, and F64 safetensors use memory-mapped views. Local BF16 tensors are decoded to F32 one tensor at a time. Statistics run through Welford's online algorithm in 1M-element chunks. Some formats allocate a complete tensor during loading or conversion.
 
 Safetensors checkpoints are byte-ranged from S3/GCS directly. Only tensor bytes are fetched and the file is never downloaded. PyTorch checkpoints download to a local cache first, then stream through the same chunked pipeline. Format detection and streaming are automatic.
 
@@ -81,8 +81,8 @@ Time is I/O-bound on local NVMe. Phi-2 was a cold read across 2 safetensors shar
 ## Features
 
 - Detect dead layers (99.99%+ zeros), NaN floods, extreme spikes (100x above p99), exploding variance (10x above median), abnormal norms (5 IQR-scaled deviations from median)
-- Stream one tensor at a time: Welford variance, incremental global histogram, and a relative-error estimate of per-tensor p99. One pass, no checkpoint-wide buffering.
-- Memory bounded by chunk size (1M elements, about 2-8 MB), not file size
+- Compute Welford variance and merge signed logarithmic quantile counts across tensors. The p99 estimates preserve relative precision across small and large weight scales.
+- Process statistics in chunks of 1M elements. Peak memory also depends on the source format and the largest tensor.
 - Read safetensors from S3 or GCS via byte-range requests. No full download needed.
 - Identical results across .pth, .safetensors, and DCP formats
 - Default diagnostic cutoffs are starting values. They are not calibrated model-health guarantees. Set them with `--variance-threshold`, `--spike-threshold`, `--norm-threshold`, and `--sparsity-threshold`.
@@ -125,7 +125,7 @@ pip install weightlens[gcs]    # Google Cloud Storage
 
 ## Security
 
-DCP metadata pickles are loaded through a blocklist-based unpickler that stubs dangerous modules. PyTorch loading uses `weights_only=True` with no unsafe fallback; old-format .pth files that reject mmap fall back to non-mmap load (not unsafe unpickling). Path traversal is blocked in shard filenames for DCP and safetensors. Byte-range reads verify returned length. Remote downloads are capped at 50 GB.
+DCP metadata pickles use an allowlist of PyTorch metadata globals. Metadata that needs other globals fails to load. Only analyze DCP metadata from sources that you trust. PyTorch loading uses `weights_only=True` with no unsafe fallback. Old-format .pth files that reject mmap fall back to non-mmap load. DCP shard paths must stay inside the checkpoint directory. Safetensors shard paths block traversal. Byte-range reads make sure that the response length is correct. Remote downloads are capped at 50 GB.
 
 ## License
 

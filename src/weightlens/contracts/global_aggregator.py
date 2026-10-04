@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     import numpy as np
     from numpy.typing import NDArray
 
-    from weightlens.models import GlobalStats
+    from weightlens.models import GlobalStats, SignedQuantileSummary
 
 
 class GlobalAggregator(ABC):
@@ -24,18 +24,15 @@ class GlobalAggregator(ABC):
         count: int,
         mean: float,
         variance: float,
-        histogram_counts: list[float] | None = None,
-        histogram_underflow: int = 0,
-        histogram_overflow: int = 0,
+        quantile_summary: SignedQuantileSummary | None = None,
         values: NDArray[np.number] | None = None,
     ) -> None:
         """Consume values with pre-computed summary statistics.
 
         Implementations may use *count*, *mean* and *variance* to skip
-        redundant recomputation.  When *histogram_counts* is *None* the
-        caller must supply *values* so the implementation can derive
-        quantile estimates from the raw array.  The default falls back
-        to :meth:`update`, ignoring the new parameters.
+        redundant recomputation. A quantile summary avoids another scan.
+        If it is absent, the caller supplies values. The default falls back
+        to :meth:`update`, ignoring the precomputed parameters.
         """
         if values is not None:
             self.update(values)

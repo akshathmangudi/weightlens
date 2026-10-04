@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import logging
 import math
 from pathlib import Path
 
@@ -139,38 +138,32 @@ def test_variance_guards_against_negative() -> None:
     assert stats.std >= 0.0
 
 
-def test_histogram_overflow_logs_warning(caplog: pytest.LogCaptureFixture) -> None:
+def test_global_quantiles_cover_mixed_scales() -> None:
     rng = np.random.default_rng(42)
     big = (rng.normal(0, 1, size=(5, 5)) * 1e4).astype(np.float32)
     small = (rng.normal(0, 1, size=(5, 5)) * 1e-4).astype(np.float32)
 
-    with caplog.at_level(logging.WARNING):
-        agg = StreamingGlobalAggregator()
-        agg.update(big)
-        agg.update(small)
-        agg.update_layer_stats(
-            LayerStats(
-                name="layer",
-                mean=0.0,
-                std=1.0,
-                min=0.0,
-                max=0.0,
-                l2_norm=1.0,
-                sparsity=0.0,
-                param_count=1,
-                p99_abs=0.0,
-            )
+    agg = StreamingGlobalAggregator()
+    agg.update(big)
+    agg.update(small)
+    agg.update_layer_stats(
+        LayerStats(
+            name="layer",
+            mean=0.0,
+            std=1.0,
+            min=0.0,
+            max=0.0,
+            l2_norm=1.0,
+            sparsity=0.0,
+            param_count=1,
+            p99_abs=0.0,
         )
-        agg.finalize()
-
-    overflow_terms = ["overflow", "underflow"]
-    warning_messages = [
-        r.message for r in caplog.records if r.levelno == logging.WARNING
-    ]
-    assert any(
-        any(term in msg.lower() for term in overflow_terms)
-        for msg in warning_messages
     )
+    stats = agg.finalize()
+    values = np.concatenate([big.ravel(), small.ravel()])
+
+    np.testing.assert_allclose(stats.p1, np.quantile(values, 0.01), rtol=0.02)
+    np.testing.assert_allclose(stats.p99, np.quantile(values, 0.99), rtol=0.02)
 
 
 def test_welford_matches_full_pass() -> None:

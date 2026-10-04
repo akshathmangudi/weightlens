@@ -7,13 +7,10 @@ import numpy as np
 
 from weightlens.contracts import StatsEngine
 from weightlens.models import LayerStats, LayerTensor
-from weightlens.stats_engines.relative_abs_quantiles import RelativeAbsQuantiles
+from weightlens.stats_engines.signed_log_quantiles import SignedLogQuantiles
 
 logger = logging.getLogger(__name__)
 
-_HISTOGRAM_BINS = 4096
-_HISTOGRAM_MIN = -100.0
-_HISTOGRAM_MAX = 100.0
 _CHUNK_SIZE = 1_000_000
 
 
@@ -21,8 +18,7 @@ class BasicStatsEngine(StatsEngine):
     """Compute per-layer statistics using chunked streaming algorithms.
 
     Mean and variance are computed via Welford's online algorithm.
-    Histogram bins are accumulated incrementally for global statistics.
-    P99 of absolute values uses relative-error logarithmic buckets.
+    Signed and absolute quantiles use relative-error logarithmic buckets.
     """
 
     def compute_layer(self, layer: LayerTensor) -> LayerStats:
@@ -42,10 +38,7 @@ class BasicStatsEngine(StatsEngine):
         welford_count = 0
         welford_mean = 0.0
         welford_m2 = 0.0
-        hist_acc = np.zeros(_HISTOGRAM_BINS, dtype=np.float64)
-        hist_under = 0
-        hist_over = 0
-        abs_quantiles = RelativeAbsQuantiles()
+        quantiles = SignedLogQuantiles()
         min_val = float("inf")
         max_val = float("-inf")
         nonzero = 0
@@ -70,25 +63,7 @@ class BasicStatsEngine(StatsEngine):
             )
             welford_count += n
 
-            # Histogram accumulation
-            h32 = chunk_w if not input_is_f16 else chunk.astype(np.float32)
-            try:
-                h, _ = np.histogram(
-                    h32, bins=_HISTOGRAM_BINS, range=(_HISTOGRAM_MIN, _HISTOGRAM_MAX)
-                )
-            except ValueError:
-                data_min = float(h32.min())
-                data_max = float(h32.max())
-                margin = max(1e-6, (data_max - data_min) * 0.01)
-                h, _ = np.histogram(
-                    h32,
-                    bins=min(_HISTOGRAM_BINS, n),
-                    range=(data_min - margin, data_max + margin),
-                )
-            hist_acc += h
-            hist_under += int(np.sum(chunk_w < _HISTOGRAM_MIN))
-            hist_over += int(np.sum(chunk_w > _HISTOGRAM_MAX))
-            abs_quantiles.update(chunk_w)
+            quantiles.update(chunk_w)
 
             # Min / max / nonzero tracking
             cmin = float(chunk_w.min())
@@ -106,9 +81,7 @@ class BasicStatsEngine(StatsEngine):
         sum_sq = (variance + mean**2) * param_count
         l2_norm = math.sqrt(max(0.0, sum_sq))
         sparsity = 1.0 - (nonzero / param_count)
-        p99_abs = abs_quantiles.quantile(0.99)
-
-        histogram_counts = [float(c) for c in hist_acc]
+        p99_abs = quantiles.abs_quantile(0.99)
 
         logger.debug(
             "Computed stats for %s: mean=%.6f std=%.6f min=%.6f max=%.6f "
@@ -133,7 +106,5 @@ class BasicStatsEngine(StatsEngine):
             sparsity=sparsity,
             param_count=param_count,
             p99_abs=p99_abs,
-            histogram_counts=histogram_counts,
-            histogram_underflow=hist_under,
-            histogram_overflow=hist_over,
+            quantile_summary=quantiles.summary(),
         )

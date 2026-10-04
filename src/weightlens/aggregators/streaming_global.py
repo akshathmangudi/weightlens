@@ -10,29 +10,20 @@ from weightlens.aggregators.streaming_layer_metrics import (
     StreamingLayerMetricsAggregator,
 )
 from weightlens.contracts import GlobalAggregator
-from weightlens.histogram_quantiles import FixedRangeHistogramQuantiles
-from weightlens.models import GlobalStats, LayerStats
+from weightlens.models import GlobalStats, LayerStats, SignedQuantileSummary
+from weightlens.stats_engines.signed_log_quantiles import SignedLogQuantiles
 
 logger = logging.getLogger(__name__)
 
 
 class StreamingGlobalAggregator(GlobalAggregator):
-    """Streaming global metrics via Welford + fixed-range histogram quantiles."""
+    """Streaming global metrics via Welford and signed logarithmic quantiles."""
 
-    def __init__(
-        self,
-        histogram_bins: int = 4096,
-        histogram_min: float = -100.0,
-        histogram_max: float = 100.0,
-    ) -> None:
+    def __init__(self) -> None:
         self._count = 0
         self._mean = 0.0
         self._m2 = 0.0
-        self._quantiles = FixedRangeHistogramQuantiles(
-            min_value=histogram_min,
-            max_value=histogram_max,
-            bins=histogram_bins,
-        )
+        self._quantiles = SignedLogQuantiles()
         self._layer_metrics = StreamingLayerMetricsAggregator()
 
     def update(self, values: NDArray[np.number]) -> None:
@@ -52,8 +43,8 @@ class StreamingGlobalAggregator(GlobalAggregator):
             raise ValueError("Non-finite value encountered in global aggregation.")
 
         batch_m2 = batch_variance * value_count
-        self._merge_batch(value_count, batch_mean, batch_m2)
         self._quantiles.update(values)
+        self._merge_batch(value_count, batch_mean, batch_m2)
         logger.debug("Updated global aggregator count=%d.", self._count)
 
     def update_from_summary(
@@ -62,35 +53,30 @@ class StreamingGlobalAggregator(GlobalAggregator):
         count: int,
         mean: float,
         variance: float,
-        histogram_counts: list[float] | None = None,
-        histogram_underflow: int = 0,
-        histogram_overflow: int = 0,
+        quantile_summary: SignedQuantileSummary | None = None,
         values: NDArray[np.number] | None = None,
     ) -> None:
         """Accept pre-computed mean/variance to skip redundant array passes.
 
-        When *histogram_counts* is provided, the histogram path is used
-        and *values* is not needed.  When *histogram_counts* is *None*,
-        *values* must be supplied so that quantile estimates can be
-        updated from the raw array.
+        A quantile summary avoids another pass over the tensor. Otherwise,
+        values must be supplied to update the quantile estimate.
         """
         if count == 0:
             return
         if not math.isfinite(mean) or not math.isfinite(variance):
             raise ValueError("Non-finite value encountered in global aggregation.")
 
-        self._merge_batch(count, mean, variance * count)
-        if histogram_counts is not None:
-            self._quantiles.merge_histogram(
-                histogram_counts,
-                underflow=histogram_underflow,
-                overflow=histogram_overflow,
-            )
+        if quantile_summary is not None:
+            if quantile_summary.total != count:
+                raise ValueError("Quantile summary count does not match batch count.")
+            self._quantiles.merge(quantile_summary)
         else:
-            assert values is not None, (
-                "values must be provided when histogram_counts is None"
-            )
+            if values is None:
+                raise ValueError("values or quantile_summary must be provided")
+            if values.size != count:
+                raise ValueError("Values count does not match batch count.")
             self._quantiles.update(values)
+        self._merge_batch(count, mean, variance * count)
         logger.debug("Updated global aggregator (from summary) count=%d.", self._count)
 
     def update_layer_stats(self, layer_stats: LayerStats) -> None:
@@ -150,4 +136,3 @@ class StreamingGlobalAggregator(GlobalAggregator):
         self._mean = mean1 + (delta * n2 / total)
         self._m2 = self._m2 + m2 + (delta * delta * n1 * n2 / total)
         self._count = total
-

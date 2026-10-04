@@ -90,18 +90,18 @@ class RichReporter(Reporter):
         table.add_column("Metric", style="bold cyan")
         table.add_column("Value")
 
-        table.add_row("mean:", f"{global_stats.mean:.6f}")
-        table.add_row("std:", f"{global_stats.std:.6f}")
-        table.add_row("p99:", f"{global_stats.p99:.6f}")
+        table.add_row("mean:", f"{global_stats.mean:.6g}")
+        table.add_row("std:", f"{global_stats.std:.6g}")
+        table.add_row("p99:", f"{global_stats.p99:.6g}")
         table.add_row(
             "median_layer_variance:",
-            f"{global_stats.median_layer_variance:.6f}",
+            f"{global_stats.median_layer_variance:.6g}",
         )
         table.add_row(
             "median_layer_norm:",
-            f"{global_stats.median_layer_norm:.6f}",
+            f"{global_stats.median_layer_norm:.6g}",
         )
-        table.add_row("iqr_layer_norm:", f"{global_stats.iqr_layer_norm:.6f}")
+        table.add_row("iqr_layer_norm:", f"{global_stats.iqr_layer_norm:.6g}")
         return table
 
     def _render_diagnostics(self, diagnostics: Iterable[DiagnosticFlag]) -> None:

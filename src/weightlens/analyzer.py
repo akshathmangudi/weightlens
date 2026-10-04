@@ -137,9 +137,7 @@ class Analyzer:
                     count=count,
                     mean=mean,
                     variance=variance,
-                    histogram_counts=stats.histogram_counts,
-                    histogram_underflow=stats.histogram_underflow,
-                    histogram_overflow=stats.histogram_overflow,
+                    quantile_summary=stats.quantile_summary,
                     values=layer.values,
                 )
             except ValueError:
@@ -166,9 +164,7 @@ class Analyzer:
                 count=count,
                 mean=mean,
                 variance=variance,
-                histogram_counts=stats.histogram_counts,
-                histogram_underflow=stats.histogram_underflow,
-                histogram_overflow=stats.histogram_overflow,
+                quantile_summary=stats.quantile_summary,
                 values=layer.values,
             )
             bucket_agg.update_layer_stats(stats)
@@ -264,9 +260,7 @@ class Analyzer:
                 count=count,
                 mean=mean,
                 variance=variance,
-                histogram_counts=stats.histogram_counts,
-                histogram_underflow=stats.histogram_underflow,
-                histogram_overflow=stats.histogram_overflow,
+                quantile_summary=stats.quantile_summary,
                 values=values,
             )
         except ValueError:
@@ -293,9 +287,7 @@ class Analyzer:
             count=count,
             mean=mean,
             variance=variance,
-            histogram_counts=stats.histogram_counts,
-            histogram_underflow=stats.histogram_underflow,
-            histogram_overflow=stats.histogram_overflow,
+            quantile_summary=stats.quantile_summary,
             values=values,
         )
         bucket_agg.update_layer_stats(stats)

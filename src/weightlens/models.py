@@ -37,6 +37,17 @@ class CheckpointHealth(BaseModel):
     corruption_flags: list[str]
 
 
+class SignedQuantileSummary(BaseModel):
+    """Mergeable counts for signed logarithmic quantile buckets."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    negative_counts: dict[int, int]
+    positive_counts: dict[int, int]
+    zeros: int
+    total: int
+
+
 class LayerStats(BaseModel):
     """Per-layer statistical metrics."""
 
@@ -52,6 +63,7 @@ class LayerStats(BaseModel):
     sparsity: float
     param_count: int
     p99_abs: float
+    quantile_summary: SignedQuantileSummary | None = None
     histogram_counts: list[float] | None = None
     histogram_underflow: int = 0
     histogram_overflow: int = 0

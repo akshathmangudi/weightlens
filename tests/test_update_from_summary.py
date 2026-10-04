@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from weightlens.aggregators.streaming_global import StreamingGlobalAggregator
-from weightlens.models import LayerStats
+from weightlens.models import LayerStats, SignedQuantileSummary
 
 
 def _make_layer_stats(std: float, l2_norm: float, name: str) -> LayerStats:
@@ -62,4 +63,44 @@ def test_update_from_summary_skips_empty() -> None:
     agg = StreamingGlobalAggregator()
     empty = np.array([], dtype=np.float64)
     agg.update_from_summary(count=0, mean=0.0, variance=0.0, values=empty)
+    assert agg._count == 0
+
+
+@pytest.mark.parametrize(
+    "summary, values, error",
+    [
+        (None, None, "values or quantile_summary"),
+        (
+            SignedQuantileSummary(
+                negative_counts={}, positive_counts={1: 2}, zeros=0, total=2
+            ),
+            None,
+            "count does not match",
+        ),
+        (
+            SignedQuantileSummary(
+                negative_counts={}, positive_counts={1: 2}, zeros=-1, total=1
+            ),
+            None,
+            "counts do not match",
+        ),
+        (None, np.array([1.0, 2.0]), "count does not match"),
+    ],
+)
+def test_invalid_quantile_input_does_not_change_global_state(
+    summary: SignedQuantileSummary | None,
+    values: np.ndarray | None,
+    error: str,
+) -> None:
+    agg = StreamingGlobalAggregator()
+
+    with pytest.raises(ValueError, match=error):
+        agg.update_from_summary(
+            count=1,
+            mean=1.0,
+            variance=0.0,
+            quantile_summary=summary,
+            values=values,
+        )
+
     assert agg._count == 0

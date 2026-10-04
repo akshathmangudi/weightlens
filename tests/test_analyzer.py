@@ -117,6 +117,28 @@ def test_analyzer_happy_path(tmp_path: Path) -> None:
         assert math.isfinite(float(getattr(result.global_stats, field)))
 
 
+@pytest.mark.parametrize("weight", [1e-4, -1e-4, 1000.0, -1000.0])
+def test_global_p99_tracks_checkpoint_scale(tmp_path: Path, weight: float) -> None:
+    values = np.full(10_000, weight, dtype=np.float32)
+    checkpoint_path = tmp_path / "scaled.pth"
+    torch.save({"layer.weight": torch.from_numpy(values)}, checkpoint_path)
+    analyzer = Analyzer(
+        source=PyTorchWeightSource(checkpoint_path),
+        validator=PyTorchCheckpointValidator(checkpoint_path),
+        stats_engine=BasicStatsEngine(),
+        aggregator=StreamingGlobalAggregator(),
+        rules=[],
+        classifier=PyTorchParameterClassifier(),
+        num_workers=1,
+        prefetch=False,
+    )
+
+    result = analyzer.analyze()
+
+    expected = float(np.quantile(values, 0.99, method="linear"))
+    np.testing.assert_allclose(result.global_stats.p99, expected, rtol=0.01)
+
+
 def test_analyzer_aborts_on_unhealthy_checkpoint() -> None:
     health = CheckpointHealth(
         file_size_bytes=1,

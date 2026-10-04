@@ -143,7 +143,13 @@ class DCPCheckpointValidator(CheckpointValidator):
             referenced_files.add(info.relative_path)
 
         for ref_file in sorted(referenced_files):
-            ref_path = _validate_shard_path(self._checkpoint_dir, ref_file)
+            try:
+                ref_path = _validate_shard_path(self._checkpoint_dir, ref_file)
+            except ValueError:
+                flag = f"unsafe_shard_path:{ref_file}"
+                corruption_flags.append(flag)
+                logger.debug("Flagged %s.", flag)
+                continue
             if not ref_path.exists():
                 flag = f"missing_shard:{ref_file}"
                 corruption_flags.append(flag)
@@ -158,7 +164,10 @@ class DCPCheckpointValidator(CheckpointValidator):
                 "metadata_read_failed",
             )
             for f in corruption_flags
-        ) and not any(f.startswith("missing_shard:") for f in corruption_flags)
+        ) and not any(
+            f.startswith(("missing_shard:", "unsafe_shard_path:"))
+            for f in corruption_flags
+        )
 
         health = CheckpointHealth(
             file_size_bytes=dir_size,
