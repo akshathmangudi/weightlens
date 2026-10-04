@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import warnings
 from collections.abc import Sequence
 from pathlib import Path
@@ -23,7 +24,7 @@ from weightlens.diagnostics import (
 from weightlens.io import materialize
 from weightlens.io.errors import MissingBackendError
 from weightlens.io.uri import anon_storage_options, is_remote
-from weightlens.models import CheckpointHealth
+from weightlens.models import AnalysisResult, CheckpointHealth
 from weightlens.reporters import RichReporter
 from weightlens.sources import PyTorchWeightSource, SafetensorsWeightSource
 from weightlens.stats_engines import BasicStatsEngine
@@ -91,25 +92,25 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     analyze.add_argument(
         "--variance-threshold",
-        type=float,
+        type=_parse_positive_finite,
         default=10.0,
         help="Variance ratio for exploding-variance detection (default: 10.0)",
     )
     analyze.add_argument(
         "--spike-threshold",
-        type=float,
+        type=_parse_positive_finite,
         default=100.0,
         help="max_abs/p99_abs for extreme-spike detection (default: 100.0)",
     )
     analyze.add_argument(
         "--norm-threshold",
-        type=float,
+        type=_parse_positive_finite,
         default=5.0,
         help="IQR z-score for abnormal-norm detection (default: 5.0)",
     )
     analyze.add_argument(
         "--sparsity-threshold",
-        type=float,
+        type=_parse_fraction,
         default=0.9999,
         help="Zero-fraction for dead-layer detection (default: 0.9999)",
     )
@@ -186,6 +187,44 @@ def _parse_num_workers(value: str) -> int | None:
     return n
 
 
+def _parse_positive_finite(value: str) -> float:
+    error = "Value must be finite and greater than 0"
+    try:
+        number = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(error) from None
+    if not math.isfinite(number) or number <= 0:
+        raise argparse.ArgumentTypeError(error)
+    return number
+
+
+def _parse_fraction(value: str) -> float:
+    number = _parse_positive_finite(value)
+    if number > 1:
+        raise argparse.ArgumentTypeError("Value must be greater than 0 and at most 1")
+    return number
+
+
+def _report_result(
+    result: AnalysisResult,
+    filename: str,
+    console: Console,
+    *,
+    variance_threshold: float,
+    spike_threshold: float,
+    norm_threshold: float,
+    sparsity_threshold: float,
+) -> int:
+    thresholds = {
+        "--variance-threshold": variance_threshold,
+        "--spike-threshold": spike_threshold,
+        "--norm-threshold": norm_threshold,
+        "--sparsity-threshold": sparsity_threshold,
+    }
+    RichReporter(console, thresholds=thresholds).render(result, filename)
+    return 1 if any(flag.severity == "error" for flag in result.diagnostics) else 0
+
+
 def _run_analyze_pytorch(
     checkpoint_path: Path,
     *,
@@ -224,9 +263,15 @@ def _run_analyze_pytorch(
     )
     result = analyzer.analyze()
 
-    reporter = RichReporter(console)
-    reporter.render(result, checkpoint_path.name)
-    return 0
+    return _report_result(
+        result,
+        checkpoint_path.name,
+        console,
+        variance_threshold=variance_threshold,
+        spike_threshold=spike_threshold,
+        norm_threshold=norm_threshold,
+        sparsity_threshold=sparsity_threshold,
+    )
 
 
 def _run_analyze_dcp(
@@ -278,9 +323,15 @@ def _run_analyze_dcp(
         )
         result = analyzer.analyze()
 
-    reporter = RichReporter(console)
-    reporter.render(result, checkpoint_path.name)
-    return 0
+    return _report_result(
+        result,
+        checkpoint_path.name,
+        console,
+        variance_threshold=variance_threshold,
+        spike_threshold=spike_threshold,
+        norm_threshold=norm_threshold,
+        sparsity_threshold=sparsity_threshold,
+    )
 
 
 def _run_analyze_safetensors(
@@ -323,8 +374,15 @@ def _run_analyze_safetensors(
         num_workers=num_workers,
     )
     result = analyzer.analyze()
-    RichReporter(console).render(result, uri.rsplit("/", 1)[-1])
-    return 0
+    return _report_result(
+        result,
+        uri.rsplit("/", 1)[-1],
+        console,
+        variance_threshold=variance_threshold,
+        spike_threshold=spike_threshold,
+        norm_threshold=norm_threshold,
+        sparsity_threshold=sparsity_threshold,
+    )
 
 
 def _run_analyze(

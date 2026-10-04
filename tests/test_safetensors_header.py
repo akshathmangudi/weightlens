@@ -102,3 +102,12 @@ def test_decode_bf16_upcasts_to_float32() -> None:
     decoded = decode_float_tensor(raw, sl)
     assert decoded.dtype == np.float32
     assert np.allclose(decoded, np.array(vals, dtype=np.float32))
+
+
+def test_parse_header_rejects_duplicate_tensor_keys() -> None:
+    entry = '{"dtype":"F32","shape":[1],"data_offsets":[0,4]}'
+    header = f'{{"w":{entry},"w":{entry}}}'.encode()
+    blob = struct.pack("<Q", len(header)) + header
+
+    with pytest.raises(ValueError, match="duplicate"):
+        parse_header(blob)

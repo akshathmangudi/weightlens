@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import struct
 from dataclasses import dataclass
+from math import prod
 
 import numpy as np
 from numpy.typing import NDArray
@@ -12,6 +13,30 @@ MAX_HEADER_LEN = 100 * 1024 * 1024  # 100 MB
 
 _FLOAT_DTYPES = frozenset({"F16", "F32", "F64", "BF16"})
 _NP_LE = {"F16": "<f2", "F32": "<f4", "F64": "<f8"}
+_DTYPE_BITS = {
+    "BOOL": 8,
+    "F4": 4,
+    "F6_E2M3": 6,
+    "F6_E3M2": 6,
+    "U8": 8,
+    "I8": 8,
+    "F8_E5M2": 8,
+    "F8_E4M3": 8,
+    "F8_E8M0": 8,
+    "F8_E4M3FNUZ": 8,
+    "F8_E5M2FNUZ": 8,
+    "I16": 16,
+    "U16": 16,
+    "F16": 16,
+    "BF16": 16,
+    "I32": 32,
+    "U32": 32,
+    "F32": 32,
+    "C64": 64,
+    "F64": 64,
+    "I64": 64,
+    "U64": 64,
+}
 
 
 @dataclass(frozen=True)
@@ -51,6 +76,34 @@ def read_header_len(prefix: bytes) -> int:
     return header_len
 
 
+def _unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate safetensors header key: {key!r}")
+        result[key] = value
+    return result
+
+
+def _nonnegative_int(value: object, field: str) -> int:
+    if type(value) is not int or value < 0:
+        raise ValueError(f"{field} must be a non-negative integer")
+    return value
+
+
+def validate_layout(slices: dict[str, TensorSlice], data_size: int) -> None:
+    """Require non-overlapping tensor ranges that cover the data buffer."""
+    if data_size < 0:
+        raise ValueError("safetensors file ends before its data buffer")
+    cursor = 0
+    for sl in sorted(slices.values(), key=lambda item: (item.begin, item.end)):
+        if sl.begin != cursor:
+            raise ValueError(f"invalid offset for tensor {sl.name!r}")
+        cursor = sl.end
+    if cursor != data_size:
+        raise ValueError("safetensors tensor offsets do not cover the data buffer")
+
+
 def parse_header(header_bytes: bytes) -> tuple[int, dict[str, TensorSlice]]:
     """Parse the first ``8 + N`` bytes into (header_len, {name: TensorSlice})."""
     header_len = read_header_len(header_bytes)
@@ -61,31 +114,47 @@ def parse_header(header_bytes: bytes) -> tuple[int, dict[str, TensorSlice]]:
             "read 8 + header_len bytes before calling parse_header"
         )
     try:
-        header = json.loads(header_bytes[HEADER_LEN_BYTES:end])
+        header = json.loads(
+            header_bytes[HEADER_LEN_BYTES:end], object_pairs_hook=_unique_object
+        )
     except json.JSONDecodeError as exc:
         raise ValueError("safetensors header is not valid JSON") from exc
 
     if not isinstance(header, dict):
         raise ValueError("safetensors header must be a JSON object")
 
+    metadata = header.get("__metadata__")
+    if "__metadata__" in header and (
+        not isinstance(metadata, dict)
+        or any(not isinstance(v, str) for v in metadata.values())
+    ):
+        raise ValueError("safetensors metadata must be a string map")
+
     slices: dict[str, TensorSlice] = {}
-    # Wrap per-entry parsing so a malformed tensor record (missing dtype/shape/
-    # data_offsets, wrong types) surfaces as a clean ValueError rather than a
-    # raw KeyError/TypeError leaking to callers.
-    try:
-        for name, meta in header.items():
-            if name == "__metadata__":
-                continue
-            begin, stop = meta["data_offsets"]
-            slices[name] = TensorSlice(
-                name=name,
-                dtype=str(meta["dtype"]),
-                shape=tuple(int(d) for d in meta["shape"]),
-                begin=int(begin),
-                end=int(stop),
-            )
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError(f"malformed safetensors header entry: {exc}") from exc
+    for name, meta in header.items():
+        if name == "__metadata__":
+            continue
+        if not isinstance(meta, dict) or set(meta) != {
+            "dtype", "shape", "data_offsets"
+        }:
+            raise ValueError(f"malformed safetensors header entry: {name!r}")
+        dtype = meta["dtype"]
+        shape = meta["shape"]
+        offsets = meta["data_offsets"]
+        if not isinstance(dtype, str) or dtype not in _DTYPE_BITS:
+            raise ValueError(f"unsupported safetensors dtype for {name!r}: {dtype!r}")
+        if not isinstance(shape, list):
+            raise ValueError(f"invalid shape for tensor {name!r}")
+        if not isinstance(offsets, list) or len(offsets) != 2:
+            raise ValueError(f"invalid offsets for tensor {name!r}")
+        dimensions = tuple(_nonnegative_int(dim, "shape dimension") for dim in shape)
+        begin, stop = (
+            _nonnegative_int(offset, "data offset") for offset in offsets
+        )
+        nbits = prod(dimensions) * _DTYPE_BITS[dtype]
+        if nbits % 8 != 0 or stop < begin or stop - begin != nbits // 8:
+            raise ValueError(f"invalid shape or byte length for tensor {name!r}")
+        slices[name] = TensorSlice(name, dtype, dimensions, begin, stop)
     return header_len, slices
 
 

@@ -7,6 +7,7 @@ import numpy as np
 
 from weightlens.contracts import StatsEngine
 from weightlens.models import LayerStats, LayerTensor
+from weightlens.stats_engines.relative_abs_quantiles import RelativeAbsQuantiles
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +21,8 @@ class BasicStatsEngine(StatsEngine):
     """Compute per-layer statistics using chunked streaming algorithms.
 
     Mean and variance are computed via Welford's online algorithm.
-    Histogram bins are accumulated incrementally across chunks.
-    P99 is estimated from the histogram (avoids O(n log n) quantile).
+    Histogram bins are accumulated incrementally for global statistics.
+    P99 of absolute values uses relative-error logarithmic buckets.
     """
 
     def compute_layer(self, layer: LayerTensor) -> LayerStats:
@@ -44,6 +45,7 @@ class BasicStatsEngine(StatsEngine):
         hist_acc = np.zeros(_HISTOGRAM_BINS, dtype=np.float64)
         hist_under = 0
         hist_over = 0
+        abs_quantiles = RelativeAbsQuantiles()
         min_val = float("inf")
         max_val = float("-inf")
         nonzero = 0
@@ -86,6 +88,7 @@ class BasicStatsEngine(StatsEngine):
             hist_acc += h
             hist_under += int(np.sum(chunk_w < _HISTOGRAM_MIN))
             hist_over += int(np.sum(chunk_w > _HISTOGRAM_MAX))
+            abs_quantiles.update(chunk_w)
 
             # Min / max / nonzero tracking
             cmin = float(chunk_w.min())
@@ -103,8 +106,7 @@ class BasicStatsEngine(StatsEngine):
         sum_sq = (variance + mean**2) * param_count
         l2_norm = math.sqrt(max(0.0, sum_sq))
         sparsity = 1.0 - (nonzero / param_count)
-        max_abs = max(abs(min_val), abs(max_val))
-        p99_abs = self._histogram_p99(hist_acc, hist_under + hist_over, max_abs)
+        p99_abs = abs_quantiles.quantile(0.99)
 
         histogram_counts = [float(c) for c in hist_acc]
 
@@ -135,43 +137,3 @@ class BasicStatsEngine(StatsEngine):
             histogram_underflow=hist_under,
             histogram_overflow=hist_over,
         )
-
-    @staticmethod
-    def _histogram_p99(
-        hist_counts: np.ndarray, overflow: int, max_abs_val: float
-    ) -> float:
-        """Estimate p99 of |x| from signed histogram + overflow count.
-
-        Approximates ``np.quantile(np.abs(tensor), 0.99)`` using the
-        signed histogram bins.  Values beyond ±100 (overflow) are
-        assumed uniformly distributed up to 5× the overflow threshold.
-        """
-        total = float(np.sum(hist_counts))
-        if total == 0:
-            return 0.0
-
-        # Fold signed histogram into |x| histogram
-        half = len(hist_counts) // 2
-        abs_hist = np.zeros(half + 1, dtype=np.float64)
-        bin_width = (_HISTOGRAM_MAX - _HISTOGRAM_MIN) / len(hist_counts)
-
-        for i in range(len(hist_counts)):
-            center = abs(_HISTOGRAM_MIN + (i + 0.5) * bin_width)
-            idx = min(int(center / bin_width), half)
-            abs_hist[idx] += hist_counts[i]
-
-        # Add overflow as an extra bin
-        total_with_overflow = total + overflow
-        target = 0.99 * total_with_overflow
-        cumsum = 0.0
-        for i in range(len(abs_hist)):
-            cumsum += abs_hist[i]
-            if cumsum >= target:
-                if abs_hist[i] == 0:
-                    frac = 0.5
-                else:
-                    frac = (target - (cumsum - abs_hist[i])) / abs_hist[i]
-                return min((i + frac) * bin_width, max_abs_val)
-
-        # Fallback: target is in overflow tail
-        return max_abs_val

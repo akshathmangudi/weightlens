@@ -64,6 +64,20 @@ def test_explicit_format_dcp(tmp_path: Path) -> None:
     assert "EXPERIMENTAL" in output
 
 
+def test_dcp_error_diagnostic_exits_one(tmp_path: Path) -> None:
+    values = torch.full((10_000,), 1e-4, dtype=torch.float32)
+    values[0] = 0.1
+    _save_dcp(tmp_path / "ckpt", {"model.weight": values})
+    console = _make_console()
+
+    exit_code = run_cli(["analyze", str(tmp_path / "ckpt")], console=console)
+
+    output = console.export_text()
+    assert "extreme-spike" in output
+    assert "FAILED" in output
+    assert exit_code == 1
+
+
 # ------------------------------------------------------------------
 # Error cases
 # ------------------------------------------------------------------

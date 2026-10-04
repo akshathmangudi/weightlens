@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 from rich import box
 from rich.console import Console
@@ -22,8 +22,14 @@ from weightlens.models import (
 class RichReporter(Reporter):
     """Render analysis results using Rich tables."""
 
-    def __init__(self, console: Console | None = None) -> None:
+    def __init__(
+        self,
+        console: Console | None = None,
+        *,
+        thresholds: Mapping[str, float] | None = None,
+    ) -> None:
         self._console = console or Console()
+        self._thresholds = thresholds
 
     def render(self, result: AnalysisResult, filename: str) -> None:
         self._console.print()
@@ -40,7 +46,22 @@ class RichReporter(Reporter):
         self._console.print(self._build_global_stats_section(result.global_stats))
         self._console.print()
 
+        if self._thresholds is not None:
+            self._console.print("Diagnostic thresholds", style="bold")
+            self._console.print(Rule(style="dim"))
+            self._console.print(self._build_thresholds_section(self._thresholds))
+            self._console.print()
+
         self._render_diagnostics(result.diagnostics)
+
+    @staticmethod
+    def _build_thresholds_section(thresholds: Mapping[str, float]) -> Table:
+        table = Table.grid(padding=(0, 3))
+        table.add_column("Flag", style="bold cyan")
+        table.add_column("Value")
+        for name, value in thresholds.items():
+            table.add_row(name, str(value))
+        return table
 
     @staticmethod
     def _build_health_section(health: CheckpointHealth) -> Table:

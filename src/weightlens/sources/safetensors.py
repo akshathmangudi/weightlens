@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterator
+from pathlib import Path
 
 import numpy as np
 
@@ -12,6 +13,7 @@ from weightlens.formats.safetensors_header import (
     decode_float_tensor,
     parse_header,
     read_header_len,
+    validate_layout,
 )
 from weightlens.formats.safetensors_index import parse_index
 from weightlens.io.byte_range import ByteRangeReader
@@ -71,20 +73,33 @@ class SafetensorsWeightSource(WeightSource):
     ) -> Iterator[LayerTensor]:
         header_len, header_bytes, resolved = self._load_header_bytes(uri)
         _, slices = parse_header(header_bytes)
+        validate_layout(
+            slices,
+            Path(resolved).stat().st_size - HEADER_LEN_BYTES - header_len,
+        )
+        if wanted is not None and set(slices) != wanted:
+            raise ValueError(f"safetensors index disagrees with shard {uri!r}")
         for name, sl in slices.items():
             if wanted is not None and name not in wanted:
                 continue
             if not sl.is_float:
                 logger.debug("Skipping non-float tensor %s (dtype=%s).", name, sl.dtype)
                 continue
-            offset, _length = sl.absolute_range(header_len)
+            offset, length = sl.absolute_range(header_len)
             dtype = _NP_LE.get(sl.dtype)
             if dtype is None:
-                logger.debug("Skipping unsupported dtype %s for %s.", sl.dtype, name)
-                continue
-            arr = np.memmap(
-                resolved, dtype=dtype, mode="r", offset=offset, shape=sl.shape
-            )
+                if sl.dtype != "BF16":
+                    raise ValueError(f"unsupported float dtype {sl.dtype!r}")
+                with open(resolved, "rb") as f:  # noqa: ASYNC230
+                    f.seek(offset)
+                    raw = f.read(length)
+                if len(raw) != length:
+                    raise ValueError(f"short read for tensor {name!r}")
+                arr = decode_float_tensor(raw, sl)
+            else:
+                arr = np.memmap(
+                    resolved, dtype=dtype, mode="r", offset=offset, shape=sl.shape
+                )
             logger.debug("Yielding %s shape=%s dtype=%s.", name, sl.shape, arr.dtype)
             yield LayerTensor(
                 name=name, values=arr, shape=sl.shape, dtype=str(arr.dtype)
@@ -99,12 +114,16 @@ class SafetensorsWeightSource(WeightSource):
             if "Short read" in str(exc):
                 raise ValueError("truncated safetensors file") from exc
             raise
-        return parse_header(header_bytes)
+        parsed_len, slices = parse_header(header_bytes)
+        validate_layout(slices, reader.size() - HEADER_LEN_BYTES - parsed_len)
+        return parsed_len, slices
 
     def _stream_reader(
         self, reader: ByteRangeReader, wanted: set[str] | None
     ) -> Iterator[LayerTensor]:
         header_len, slices = self._load_header(reader)
+        if wanted is not None and set(slices) != wanted:
+            raise ValueError(f"safetensors index disagrees with shard {reader.uri!r}")
         for name, sl in slices.items():
             if wanted is not None and name not in wanted:
                 continue

@@ -31,7 +31,43 @@ def test_basic_stats_engine_computes_expected_stats() -> None:
     np.testing.assert_allclose(stats.max, 4.0)
     np.testing.assert_allclose(stats.l2_norm, np.sqrt(30.0))
     np.testing.assert_allclose(stats.sparsity, 0.0)
-    np.testing.assert_allclose(stats.p99_abs, expected_p99_abs, atol=0.05)
+    np.testing.assert_allclose(stats.p99_abs, expected_p99_abs, rtol=0.006, atol=0)
+
+
+@pytest.mark.parametrize("scale", [1e-8, 1e-4, 1.0, 1e4, 1e8])
+def test_p99_abs_tracks_tensor_scale(scale: float) -> None:
+    rng = np.random.default_rng(42)
+    values = (rng.normal(size=10_000) * scale).astype(np.float64)
+    values[::17] = 0.0
+    values[0] = -100.0 * scale
+
+    stats = BasicStatsEngine().compute_layer(_make_layer(values))
+    expected = float(np.quantile(np.abs(values), 0.99, method="linear"))
+
+    np.testing.assert_allclose(stats.p99_abs, expected, rtol=0.006, atol=0)
+
+
+def test_p99_abs_detects_small_scale_spike() -> None:
+    rng = np.random.default_rng(42)
+    values = rng.normal(0.0, 1e-4, size=10_000).astype(np.float32)
+    values[0] = 0.1
+
+    stats = BasicStatsEngine().compute_layer(_make_layer(values))
+    expected = float(np.quantile(np.abs(values), 0.99, method="linear"))
+
+    np.testing.assert_allclose(stats.p99_abs, expected, rtol=0.006, atol=0)
+    assert float(np.max(np.abs(values))) / stats.p99_abs >= 100.0
+
+
+def test_p99_abs_combines_chunks() -> None:
+    rng = np.random.default_rng(7)
+    values = rng.normal(0.0, 1e-5, size=1_000_123).astype(np.float32)
+    values[-1] = -0.1
+
+    stats = BasicStatsEngine().compute_layer(_make_layer(values))
+    expected = float(np.quantile(np.abs(values), 0.99, method="linear"))
+
+    np.testing.assert_allclose(stats.p99_abs, expected, rtol=0.006, atol=0)
 
 
 def test_basic_stats_engine_reports_zero_sparsity_metrics() -> None:

@@ -36,6 +36,13 @@ p99:                     0.048
 median_layer_variance:   0.000
 median_layer_norm:       0.019
 
+Diagnostic thresholds
+================================================================================
+--variance-threshold:  10.0
+--spike-threshold:     100.0
+--norm-threshold:      5.0
+--sparsity-threshold:  0.9999
+
 Diagnostics (2)
 ================================================================================
    Severity   Rule            Layer           Message
@@ -45,11 +52,15 @@ Diagnostics (2)
 FAILED — 1 error, 1 warning
 ```
 
+The report shows the active cutoffs on every analysis. A FAILED result returns exit code 1. An invalid cutoff returns exit code 2.
+
+PASSED means that no rule crossed its cutoff. It does not establish model quality.
+
 ## Why weightlens?
 
 `torch.load()` deserializes the entire checkpoint into memory. You cannot inspect a single tensor without paying the full memory cost first.
 
-Weightlens streams tensors one at a time instead. For safetensors, the file is memory-mapped directly and tensor data is never copied into a buffer. Statistics run through Welford's online algorithm in 1M-element chunks, so peak RSS stays bounded by chunk size rather than checkpoint size.
+Weightlens reads tensors one at a time. Local F16, F32, and F64 safetensors use memory-mapped views. Local BF16 tensors are decoded to F32 one tensor at a time. Statistics run through Welford's online algorithm in 1M-element chunks.
 
 Safetensors checkpoints are byte-ranged from S3/GCS directly. Only tensor bytes are fetched and the file is never downloaded. PyTorch checkpoints download to a local cache first, then stream through the same chunked pipeline. Format detection and streaming are automatic.
 
@@ -70,11 +81,11 @@ Time is I/O-bound on local NVMe. Phi-2 was a cold read across 2 safetensors shar
 ## Features
 
 - Detect dead layers (99.99%+ zeros), NaN floods, extreme spikes (100x above p99), exploding variance (10x above median), abnormal norms (5 IQR-scaled deviations from median)
-- Stream one tensor at a time: Welford variance, incremental histogram, histogram-based p99. One pass, no buffering.
+- Stream one tensor at a time: Welford variance, incremental global histogram, and a relative-error estimate of per-tensor p99. One pass, no checkpoint-wide buffering.
 - Memory bounded by chunk size (1M elements, about 2-8 MB), not file size
 - Read safetensors from S3 or GCS via byte-range requests. No full download needed.
 - Identical results across .pth, .safetensors, and DCP formats
-- Diagnostic thresholds are conservative to avoid false positives on typical architectures. Each rule is configurable: `--variance-threshold`, `--spike-threshold`, `--norm-threshold`, `--sparsity-threshold`
+- Default diagnostic cutoffs are starting values. They are not calibrated model-health guarantees. Set them with `--variance-threshold`, `--spike-threshold`, `--norm-threshold`, and `--sparsity-threshold`.
 
 ## Formats
 
