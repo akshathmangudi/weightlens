@@ -12,6 +12,7 @@ from safetensors.numpy import load_file
 
 from tests.fixtures_safetensors import write_single
 from weightlens.formats.safetensors_header import TensorSlice, decode_float_tensor
+from weightlens.models import TensorOmission
 from weightlens.sources.safetensors import SafetensorsWeightSource
 
 # ---------------------------------------------------------------------------
@@ -69,6 +70,26 @@ def _slice_for(
     name: str, dtype: str, shape: tuple[int, ...], begin: int, end: int
 ) -> TensorSlice:
     return TensorSlice(name=name, dtype=dtype, shape=shape, begin=begin, end=end)
+
+
+def test_source_marks_unsupported_float_dtype_as_skipped(tmp_path: Path) -> None:
+    path = tmp_path / "mixed.safetensors"
+    _write_raw_safetensors(
+        path,
+        {
+            "weight": ("F32", (1,), struct.pack("<f", 1.0)),
+            "float8_weight": ("F8_E4M3", (1,), b"\x00"),
+            "step": ("I64", (1,), struct.pack("<q", 3)),
+        },
+    )
+
+    events = list(SafetensorsWeightSource(str(path)).iter_events())
+    omissions = [event for event in events if isinstance(event, TensorOmission)]
+
+    assert {(item.name, item.kind) for item in omissions} == {
+        ("float8_weight", "skipped"),
+        ("step", "excluded"),
+    }
 
 
 # ---------------------------------------------------------------------------

@@ -2,6 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from weightlens.models import (
+    AnalysisCoverage,
     AnalysisResult,
     CheckpointHealth,
     DiagnosticFlag,
@@ -161,6 +162,7 @@ def test_analysis_result_accepts_valid_payload() -> None:
         bucket_stats={"kernel": make_global_stats()},
         diagnostics=[make_diagnostic_flag()],
         health=make_checkpoint_health(),
+        coverage=AnalysisCoverage(analyzed=1, eligible=1, omissions=[]),
     )
 
     assert result.global_stats.mean == 0.02

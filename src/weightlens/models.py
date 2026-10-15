@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -97,6 +97,31 @@ class DiagnosticFlag(BaseModel):
     severity: str
 
 
+class TensorOmission(BaseModel):
+    """A tensor that did not contribute to checkpoint statistics."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    name: str
+    kind: Literal["excluded", "skipped"]
+    reason: str
+    dtype: str | None = None
+
+
+class AnalysisCoverage(BaseModel):
+    """Account for tensors that did and did not enter statistics."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    analyzed: int
+    eligible: int
+    omissions: list[TensorOmission]
+
+    @property
+    def partial(self) -> bool:
+        return any(item.kind == "skipped" for item in self.omissions)
+
+
 class AnalysisResult(BaseModel):
     """Immutable analysis result bundle."""
 
@@ -107,3 +132,4 @@ class AnalysisResult(BaseModel):
     bucket_stats: dict[str, GlobalStats]
     diagnostics: list[DiagnosticFlag]
     health: CheckpointHealth
+    coverage: AnalysisCoverage

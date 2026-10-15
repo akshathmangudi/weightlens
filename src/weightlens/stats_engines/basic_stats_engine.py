@@ -7,6 +7,7 @@ import numpy as np
 
 from weightlens.contracts import StatsEngine
 from weightlens.models import LayerStats, LayerTensor
+from weightlens.stats_engines.errors import EmptyTensorError, NonFiniteTensorError
 from weightlens.stats_engines.signed_log_quantiles import SignedLogQuantiles
 
 logger = logging.getLogger(__name__)
@@ -26,13 +27,15 @@ class BasicStatsEngine(StatsEngine):
         param_count = int(values.size)
         if param_count == 0:
             logger.error("Layer %s is empty.", layer.name)
-            raise ValueError(f"Layer {layer.name} is empty.")
+            raise EmptyTensorError(f"Layer {layer.name} is empty.")
 
         flat = values.ravel()
 
         if not np.isfinite(flat).all():
             logger.error("Layer %s contains NaN or Inf values.", layer.name)
-            raise ValueError(f"Layer {layer.name} contains NaN values.")
+            raise NonFiniteTensorError(
+                f"Layer {layer.name} contains NaN or Inf values."
+            )
 
         # --- single fused pass over chunks ---
         welford_count = 0

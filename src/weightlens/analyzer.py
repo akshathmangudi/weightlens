@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from collections import deque
 from collections.abc import Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
@@ -20,13 +21,16 @@ from weightlens.contracts import (
 )
 from weightlens.memory import compute_max_workers
 from weightlens.models import (
+    AnalysisCoverage,
     AnalysisResult,
     CheckpointHealth,
     DiagnosticFlag,
     LayerStats,
     LayerTensor,
+    TensorOmission,
 )
 from weightlens.prefetch import PrefetchIterator
+from weightlens.stats_engines.errors import EmptyTensorError, NonFiniteTensorError
 
 logger = logging.getLogger(__name__)
 
@@ -91,6 +95,47 @@ class Analyzer:
             return self._classifier.classify(layer.name, layer.shape, layer.dtype)
         return "kernel"
 
+    @staticmethod
+    def _record_unanalyzed(
+        name: str,
+        dtype: str,
+        reason: str,
+        rule: str,
+        message: str,
+        diagnostics: list[DiagnosticFlag],
+        omissions: list[TensorOmission],
+        severity: str = "error",
+    ) -> None:
+        omissions.append(
+            TensorOmission(name=name, kind="skipped", reason=reason, dtype=dtype)
+        )
+        diagnostics.append(
+            DiagnosticFlag(layer=name, rule=rule, message=message, severity=severity)
+        )
+
+    @classmethod
+    def _record_stats_error(
+        cls,
+        name: str,
+        dtype: str,
+        error: EmptyTensorError | NonFiniteTensorError,
+        diagnostics: list[DiagnosticFlag],
+        omissions: list[TensorOmission],
+    ) -> None:
+        if isinstance(error, EmptyTensorError):
+            reason = "empty tensor"
+            rule = "empty-tensor"
+            message = "Tensor is empty. Statistics skipped."
+        else:
+            reason = "NaN or Inf values"
+            rule = "non-finite-values"
+            message = "Tensor contains NaN or Inf values. Statistics skipped."
+        logger.warning("Skipping layer %s: %s.", name, reason)
+        cls._record_unanalyzed(
+            name, dtype, reason, rule, message, diagnostics, omissions,
+            severity="warn" if isinstance(error, EmptyTensorError) else "error",
+        )
+
     def _analyze_sequential(
         self,
         layer_stats_consumer: LayerStatsConsumer,
@@ -99,62 +144,55 @@ class Analyzer:
         bucket_aggregators: dict[str, StreamingGlobalAggregator] = {}
         diagnostics: list[DiagnosticFlag] = []
         layer_stats: list[LayerStats] = []
+        omissions: list[TensorOmission] = []
 
-        layer_iter = self._source.iter_layers()
+        layer_iter = self._source.iter_events()
         if self._prefetch:
             layer_iter = PrefetchIterator(layer_iter)
 
-        for layer in layer_iter:
+        for event in layer_iter:
+            if isinstance(event, TensorOmission):
+                omissions.append(event)
+                continue
+            layer = event
             category = self._classify(layer)
             if category == "skip":
+                omissions.append(
+                    TensorOmission(
+                        name=layer.name, kind="excluded",
+                        reason="excluded by parameter classifier", dtype=layer.dtype,
+                    )
+                )
                 continue
 
             try:
                 stats = self._stats_engine.compute_layer(layer)
-            except ValueError:
-                logger.warning(
-                    "Skipping layer %s: non-finite or invalid values.", layer.name
-                )
-                diagnostics.append(
-                    DiagnosticFlag(
-                        layer=layer.name,
-                        rule="non-finite-values",
-                        message="Layer contains NaN or Inf values",
-                        severity="error",
-                    )
+            except (EmptyTensorError, NonFiniteTensorError) as error:
+                self._record_stats_error(
+                    layer.name, layer.dtype, error, diagnostics, omissions
                 )
                 continue
 
             stats = stats.model_copy(update={"category": category})
-            layer_stats.append(stats)
-
             count = stats.param_count
             mean = stats.mean
             variance = stats.std**2
-
-            try:
-                self._aggregator.update_from_summary(
-                    count=count,
-                    mean=mean,
-                    variance=variance,
-                    quantile_summary=stats.quantile_summary,
-                    values=layer.values,
-                )
-            except ValueError:
-                logger.warning(
-                    "Skipping layer %s in global aggregation: non-finite stats.",
-                    layer.name,
-                )
-                layer_stats.pop()
-                diagnostics.append(
-                    DiagnosticFlag(
-                        layer=layer.name,
-                        rule="non-finite-values",
-                        message="Layer produces non-finite global statistics",
-                        severity="error",
-                    )
+            if not math.isfinite(mean) or not math.isfinite(variance):
+                self._record_unanalyzed(
+                    layer.name, layer.dtype, "non-finite computed statistics",
+                    "non-finite-statistics",
+                    "Computed statistics are non-finite. Statistics skipped.",
+                    diagnostics, omissions,
                 )
                 continue
+            self._aggregator.update_from_summary(
+                count=count,
+                mean=mean,
+                variance=variance,
+                quantile_summary=stats.quantile_summary,
+                values=layer.values,
+            )
+            layer_stats.append(stats)
             layer_stats_consumer.update_layer_stats(stats)
 
             if category not in bucket_aggregators:
@@ -170,7 +208,7 @@ class Analyzer:
             bucket_agg.update_layer_stats(stats)
 
         return self._finalize(
-            layer_stats, diagnostics, bucket_aggregators, health
+            layer_stats, diagnostics, omissions, bucket_aggregators, health
         )
 
     def _analyze_parallel(
@@ -182,20 +220,32 @@ class Analyzer:
         bucket_aggregators: dict[str, StreamingGlobalAggregator] = {}
         diagnostics: list[DiagnosticFlag] = []
         layer_stats: list[LayerStats] = []
+        omissions: list[TensorOmission] = []
 
         # Bounded window of futures to cap memory usage
         pending: deque[tuple[str, str, NDArray[np.number], Future[LayerStats]]] = (
             deque()
         )
 
-        layer_iter = self._source.iter_layers()
+        layer_iter = self._source.iter_events()
         if self._prefetch:
             layer_iter = PrefetchIterator(layer_iter)
 
         with ThreadPoolExecutor(max_workers=num_workers) as pool:
-            for layer in layer_iter:
+            for event in layer_iter:
+                if isinstance(event, TensorOmission):
+                    omissions.append(event)
+                    continue
+                layer = event
                 category = self._classify(layer)
                 if category == "skip":
+                    omissions.append(
+                        TensorOmission(
+                            name=layer.name, kind="excluded",
+                            reason="excluded by parameter classifier",
+                            dtype=layer.dtype,
+                        )
+                    )
                     continue
 
                 future = pool.submit(self._stats_engine.compute_layer, layer)
@@ -207,6 +257,7 @@ class Analyzer:
                         pending,
                         layer_stats,
                         diagnostics,
+                        omissions,
                         bucket_aggregators,
                         layer_stats_consumer,
                     )
@@ -217,12 +268,13 @@ class Analyzer:
                     pending,
                     layer_stats,
                     diagnostics,
+                    omissions,
                     bucket_aggregators,
                     layer_stats_consumer,
                 )
 
         return self._finalize(
-            layer_stats, diagnostics, bucket_aggregators, health
+            layer_stats, diagnostics, omissions, bucket_aggregators, health
         )
 
     def _drain_one(
@@ -230,54 +282,40 @@ class Analyzer:
         pending: deque[tuple[str, str, NDArray[np.number], Future[LayerStats]]],
         layer_stats: list[LayerStats],
         diagnostics: list[DiagnosticFlag],
+        omissions: list[TensorOmission],
         bucket_aggregators: dict[str, StreamingGlobalAggregator],
         layer_stats_consumer: LayerStatsConsumer,
     ) -> None:
         name, category, values, future = pending.popleft()
         try:
             stats = future.result()
-        except ValueError:
-            logger.warning("Skipping layer %s: non-finite or invalid values.", name)
-            diagnostics.append(
-                DiagnosticFlag(
-                    layer=name,
-                    rule="non-finite-values",
-                    message="Layer contains NaN or Inf values",
-                    severity="error",
-                )
+        except (EmptyTensorError, NonFiniteTensorError) as error:
+            self._record_stats_error(
+                name, str(values.dtype), error, diagnostics, omissions
             )
             return
 
         stats = stats.model_copy(update={"category": category})
-        layer_stats.append(stats)
 
         count = stats.param_count
         mean = stats.mean
         variance = stats.std**2
-
-        try:
-            self._aggregator.update_from_summary(
-                count=count,
-                mean=mean,
-                variance=variance,
-                quantile_summary=stats.quantile_summary,
-                values=values,
-            )
-        except ValueError:
-            logger.warning(
-                "Skipping layer %s in global aggregation: non-finite stats.",
-                name,
-            )
-            layer_stats.pop()
-            diagnostics.append(
-                DiagnosticFlag(
-                    layer=name,
-                    rule="non-finite-values",
-                    message="Layer produces non-finite global statistics",
-                    severity="error",
-                )
+        if not math.isfinite(mean) or not math.isfinite(variance):
+            self._record_unanalyzed(
+                name, str(values.dtype), "non-finite computed statistics",
+                "non-finite-statistics",
+                "Computed statistics are non-finite. Statistics skipped.",
+                diagnostics, omissions,
             )
             return
+        self._aggregator.update_from_summary(
+            count=count,
+            mean=mean,
+            variance=variance,
+            quantile_summary=stats.quantile_summary,
+            values=values,
+        )
+        layer_stats.append(stats)
         layer_stats_consumer.update_layer_stats(stats)
 
         if category not in bucket_aggregators:
@@ -296,6 +334,7 @@ class Analyzer:
         self,
         layer_stats: list[LayerStats],
         diagnostics: list[DiagnosticFlag],
+        omissions: list[TensorOmission],
         bucket_aggregators: dict[str, StreamingGlobalAggregator],
         health: CheckpointHealth,
     ) -> AnalysisResult:
@@ -321,4 +360,10 @@ class Analyzer:
             bucket_stats=bucket_stats,
             diagnostics=diagnostics,
             health=health,
+            coverage=AnalysisCoverage(
+                analyzed=len(layer_stats),
+                eligible=len(layer_stats)
+                + sum(item.kind == "skipped" for item in omissions),
+                omissions=omissions,
+            ),
         )

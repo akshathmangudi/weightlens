@@ -28,7 +28,10 @@ tensor_count:       8
 total_params:       268,650
 corruption_flags:   none
 
-Global Stats
+Inspection: COMPLETE
+Coverage: 8 of 8 eligible tensors analyzed; 0 excluded; 0 skipped.
+
+Global Stats (analyzed tensors only)
 ================================================================================
 mean:                    3.722
 std:                     1929.327
@@ -40,7 +43,7 @@ Diagnostic thresholds
 ================================================================================
 --variance-threshold:  10.0
 --spike-threshold:     100.0
---norm-threshold:      5.0
+--norm-threshold:      off (experimental)
 --sparsity-threshold:  0.9999
 
 Diagnostics (2)
@@ -49,12 +52,14 @@ Diagnostics (2)
    warn       exploding-var   conv2.weight    variance_ratio=3.78e6 >= 10.0
    error      extreme-spike   conv2.weight    spike_ratio=1.29e9 >= 100.0
 
-FAILED — 1 error, 1 warning
+FINDINGS: 1 error-level finding, 1 warning
 ```
 
-The report shows the active cutoffs on every analysis. A FAILED result returns exit code 1. An invalid cutoff returns exit code 2.
+The report shows the active cutoffs and the disabled norm rule. A completed analysis returns exit code 0, even when it reports findings. An unreadable checkpoint returns a nonzero code. An invalid cutoff returns exit code 2.
 
-PASSED means that no rule crossed its cutoff. It does not establish model quality.
+NO FINDINGS means that no active diagnostic rule crossed its cutoff. It does not establish model quality. The severity column describes each finding, not the command's exit status.
+
+PARTIAL means that Weightlens skipped an eligible tensor. The report names each skipped tensor and gives the reason. Global statistics cover only analyzed tensors. Intentional exclusions, such as integer counters, appear in the coverage section without making the inspection partial. An empty tensor receives a warning-level `empty-tensor` finding and appears as skipped. If every tensor is empty, Weightlens stops the inspection with exit code `1` because it has no values to analyze.
 
 ## Why weightlens?
 
@@ -80,12 +85,12 @@ Time is I/O-bound on local NVMe. Phi-2 was a cold read across 2 safetensors shar
 
 ## Features
 
-- Detect dead layers (99.99%+ zeros), NaN floods, extreme spikes (100x above p99), exploding variance (10x above median), abnormal norms (5 IQR-scaled deviations from median)
+- Detect dead layers (99.99%+ zeros), NaN floods, extreme spikes (100x above p99), and exploding variance (10x above median). An experimental abnormal-norm warning is opt-in.
 - Compute Welford variance and merge signed logarithmic quantile counts across tensors. The p99 estimates preserve relative precision across small and large weight scales.
 - Process statistics in chunks of 1M elements. Peak memory also depends on the source format and the largest tensor.
 - Read safetensors from S3 or GCS via byte-range requests. No full download needed.
 - Identical results across .pth, .safetensors, and DCP formats
-- Default diagnostic cutoffs are starting values. They are not calibrated model-health guarantees. Set them with `--variance-threshold`, `--spike-threshold`, `--norm-threshold`, and `--sparsity-threshold`.
+- Default diagnostic cutoffs are starting values. They are not calibrated model-health guarantees. Set them with `--variance-threshold`, `--spike-threshold`, and `--sparsity-threshold`. Pass `--norm-threshold N` to enable the experimental raw-L2 warning.
 
 ## Formats
 

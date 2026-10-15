@@ -13,7 +13,7 @@ import torch
 from torch.distributed.checkpoint.metadata import Metadata
 
 from weightlens.contracts import WeightSource
-from weightlens.models import LayerTensor
+from weightlens.models import LayerTensor, TensorOmission
 from weightlens.tensor_utils import tensor_to_numpy
 
 logger = logging.getLogger(__name__)
@@ -113,7 +113,12 @@ class DCPWeightSource(WeightSource):
     def __init__(self, checkpoint_dir: str | Path) -> None:
         self._checkpoint_dir = Path(checkpoint_dir)
 
-    def iter_layers(self) -> Iterator[LayerTensor]:  # noqa: C901
+    def iter_layers(self) -> Iterator[LayerTensor]:
+        for event in self.iter_events():
+            if isinstance(event, LayerTensor):
+                yield event
+
+    def iter_events(self) -> Iterator[LayerTensor | TensorOmission]:  # noqa: C901
         from torch.distributed.checkpoint.metadata import (
             MetadataIndex,
             TensorStorageMetadata,
@@ -159,11 +164,33 @@ class DCPWeightSource(WeightSource):
             dtype = storage_meta.properties.dtype
             if dtype not in _FLOAT_DTYPES:
                 logger.debug("Skipping non-float tensor %s (dtype=%s).", name, dtype)
+                unsupported = dtype.is_floating_point or dtype.is_complex
+                yield TensorOmission(
+                    name=name,
+                    kind="skipped" if unsupported else "excluded",
+                    reason=(
+                        "unsupported numeric dtype" if unsupported
+                        else "non-floating tensor"
+                    ),
+                    dtype=str(dtype),
+                )
                 continue
 
             chunk_info = storage_lookup.get(name, [])
             if not chunk_info:
-                logger.warning("No storage_data entries for tensor %s, skipping.", name)
+                logger.warning(
+                    "No usable DCP storage location for tensor %s, skipping.",
+                    name,
+                )
+                yield TensorOmission(
+                    name=name,
+                    kind="skipped",
+                    reason=(
+                        "DCP metadata has no usable storage location for this "
+                        "tensor. Its values were not inspected."
+                    ),
+                    dtype=str(dtype),
+                )
                 continue
 
             chunk_info.sort(key=lambda item: tuple(item[0]))

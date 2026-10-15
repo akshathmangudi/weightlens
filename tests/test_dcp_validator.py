@@ -40,6 +40,36 @@ def test_healthy_checkpoint(tmp_path: Path) -> None:
     assert health.file_size_bytes > 0
 
 
+def test_validator_counts_empty_tensor_without_corruption_flag(
+    tmp_path: Path,
+) -> None:
+    checkpoint = tmp_path / "ckpt"
+    _save_dcp(
+        checkpoint,
+        {"empty.weight": torch.empty(0), "ok.weight": torch.ones(1)},
+    )
+
+    health = DCPCheckpointValidator(checkpoint).validate()
+
+    assert health.loadable is True
+    assert health.corruption_flags == []
+    assert health.tensor_count == 2
+    assert health.total_params == 1
+
+
+def test_validator_marks_only_empty_tensors_as_empty(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "ckpt"
+    _save_dcp(checkpoint, {"empty.weight": torch.empty(0)})
+
+    health = DCPCheckpointValidator(checkpoint).validate()
+
+    assert health.loadable is True
+    assert health.is_empty is True
+    assert health.tensor_count == 1
+    assert health.total_params == 0
+    assert health.corruption_flags == []
+
+
 # ------------------------------------------------------------------
 # Directory / metadata errors
 # ------------------------------------------------------------------

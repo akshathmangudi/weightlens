@@ -105,7 +105,7 @@ class SafetensorsCheckpointValidator(CheckpointValidator):
             )
         return CheckpointHealth(
             file_size_bytes=size,
-            is_empty=(count == 0),
+            is_empty=(params == 0),
             loadable=True,
             tensor_count=count,
             total_params=params,

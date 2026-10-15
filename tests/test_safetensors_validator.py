@@ -37,6 +37,21 @@ def test_validate_sharded_sums_across_shards(tmp_path: Path) -> None:
     assert health.total_params == 30
 
 
+def test_validate_only_empty_tensors_marks_checkpoint_empty(
+    tmp_path: Path,
+) -> None:
+    path = str(tmp_path / "only-empty.safetensors")
+    write_single(path, {"empty.weight": np.empty(0, dtype=np.float32)})
+
+    health = SafetensorsCheckpointValidator(path).validate()
+
+    assert health.loadable is True
+    assert health.is_empty is True
+    assert health.tensor_count == 1
+    assert health.total_params == 0
+    assert health.corruption_flags == []
+
+
 def test_validate_missing_file_raises(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError):
         SafetensorsCheckpointValidator(str(tmp_path / "nope.safetensors")).validate()

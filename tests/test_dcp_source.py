@@ -10,6 +10,7 @@ import pytest
 import torch
 from torch.distributed.checkpoint.state_dict_saver import save as dcp_save
 
+from weightlens.models import TensorOmission
 from weightlens.sources.dcp import (
     DCPWeightSource,
     _validate_shard_path,
@@ -94,6 +95,15 @@ def test_skips_non_float_tensors(tmp_path: Path) -> None:
 
     assert len(layers) == 1
     assert layers[0].name == "float_layer"
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        events = list(DCPWeightSource(tmp_path / "ckpt").iter_events())
+    omissions = [event for event in events if isinstance(event, TensorOmission)]
+    assert {(item.name, item.kind) for item in omissions} == {
+        ("int_step", "excluded"),
+        ("long_counter", "excluded"),
+    }
 
 
 # ------------------------------------------------------------------

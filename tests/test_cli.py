@@ -63,6 +63,29 @@ def test_cli_analyze_empty_checkpoint(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize("format_name", ["pt", "safetensors"])
+def test_cli_rejects_checkpoint_with_only_empty_tensors(
+    tmp_path: Path, format_name: str
+) -> None:
+    checkpoint_path = tmp_path / f"only-empty.{format_name}"
+    state = {"empty.weight": torch.empty(0)}
+    if format_name == "pt":
+        torch.save(state, checkpoint_path)
+    else:
+        save_file(state, str(checkpoint_path))
+    console = Console(record=True, force_terminal=False, color_system=None)
+
+    exit_code = run_cli(["analyze", str(checkpoint_path)], console=console)
+    output = " ".join(console.export_text().replace("│", " ").split())
+
+    assert exit_code == 1
+    assert "Checkpoint Health" in output
+    assert "is_empty True" in output
+    assert "tensor_count 1" in output
+    assert "total_params 0" in output
+    assert "contains tensors but no values to analyze" in output
+
+
+@pytest.mark.parametrize("format_name", ["pt", "safetensors"])
 def test_cli_reports_small_scale_spike(
     tmp_path: Path, format_name: str
 ) -> None:
@@ -83,11 +106,24 @@ def test_cli_reports_small_scale_spike(
 
     output = console.export_text()
     assert "extreme-spike" in output
-    assert "FAILED" in output
-    assert exit_code == 1
+    assert "FINDINGS" in output
+    assert exit_code == 0
 
 
-def test_cli_does_not_pass_when_local_bf16_contains_nan(tmp_path: Path) -> None:
+def test_cli_reports_dead_layer_without_failing(tmp_path: Path) -> None:
+    checkpoint_path = tmp_path / "zeros.pth"
+    torch.save({"layer.weight": torch.zeros(1_000)}, checkpoint_path)
+    console = Console(record=True, force_terminal=False, color_system=None)
+
+    exit_code = run_cli(["analyze", str(checkpoint_path)], console=console)
+
+    output = console.export_text()
+    assert "dead-layer" in output
+    assert "FINDINGS" in output
+    assert exit_code == 0
+
+
+def test_cli_reports_non_finite_bf16_without_failing(tmp_path: Path) -> None:
     checkpoint_path = tmp_path / "mixed-bf16.safetensors"
     save_file(
         {
@@ -101,10 +137,106 @@ def test_cli_does_not_pass_when_local_bf16_contains_nan(tmp_path: Path) -> None:
     exit_code = run_cli(["analyze", str(checkpoint_path)], console=console)
 
     output = console.export_text()
-    assert "Layer contains NaN or" in output
-    assert "FAILED" in output
-    assert "PASSED" not in output
-    assert exit_code == 1
+    assert "Tensor contains NaN or" in output
+    assert "Statistics skipped." in " ".join(output.split())
+    assert "Inspection: PARTIAL" in output
+    assert "Coverage: 1 of 2 eligible tensors analyzed" in output
+    assert "FINDINGS" in output
+    assert "NO FINDINGS" not in output
+    assert exit_code == 0
+
+
+@pytest.mark.parametrize("format_name", ["pt", "safetensors"])
+def test_cli_reports_empty_tensor_as_warning(
+    tmp_path: Path, format_name: str
+) -> None:
+    state = {
+        "empty.weight": torch.empty(0),
+        "ok.weight": torch.ones(2),
+    }
+    checkpoint_path = tmp_path / f"empty-tensor.{format_name}"
+    if format_name == "pt":
+        torch.save(state, checkpoint_path)
+    else:
+        save_file(state, str(checkpoint_path))
+    console = Console(
+        record=True, force_terminal=False, color_system=None, width=120
+    )
+
+    exit_code = run_cli(["analyze", str(checkpoint_path)], console=console)
+    output = " ".join(console.export_text().split())
+
+    assert exit_code == 0
+    assert "Inspection: PARTIAL" in output
+    assert "empty.weight" in output
+    assert "empty-tensor" in output
+    assert "1 warning" in output
+    assert "corruption_flags: none" in output
+
+
+def test_nonfloating_safetensors_exclusion_keeps_inspection_complete(
+    tmp_path: Path,
+) -> None:
+    checkpoint_path = tmp_path / "mixed-types.safetensors"
+    save_file(
+        {
+            "weight": torch.tensor([1.0, 2.0]),
+            "step": torch.tensor(3, dtype=torch.int64),
+        },
+        str(checkpoint_path),
+    )
+    console = Console(record=True, force_terminal=False, color_system=None)
+
+    exit_code = run_cli(["analyze", str(checkpoint_path)], console=console)
+
+    output = console.export_text()
+    assert "Inspection: COMPLETE" in output
+    assert "Coverage: 1 of 1 eligible tensors analyzed; 1 excluded; 0 skipped" in output
+    assert "step" in output
+    assert exit_code == 0
+
+
+@pytest.mark.parametrize("format_name", ["pt", "safetensors"])
+def test_abnormal_norm_requires_explicit_threshold(
+    tmp_path: Path, format_name: str
+) -> None:
+    state = {
+        f"layer{i}.weight": torch.full((16,), 0.8 + i * 0.05)
+        for i in range(9)
+    }
+    state["large.weight"] = torch.ones(10_000)
+    checkpoint_path = tmp_path / f"norms.{format_name}"
+    if format_name == "pt":
+        torch.save(state, checkpoint_path)
+    else:
+        save_file(state, str(checkpoint_path))
+
+    default_console = Console(
+        record=True, force_terminal=False, color_system=None, width=120
+    )
+    default_exit = run_cli(
+        ["analyze", str(checkpoint_path)], console=default_console
+    )
+    default_output = default_console.export_text()
+
+    assert default_exit == 0
+    assert "median_layer_norm:" in default_output
+    assert "off (experimental)" in default_output
+    assert "abnormal-norm" not in default_output
+    assert "NO FINDINGS" in default_output
+
+    enabled_console = Console(
+        record=True, force_terminal=False, color_system=None, width=120
+    )
+    enabled_exit = run_cli(
+        ["analyze", str(checkpoint_path), "--norm-threshold", "5"],
+        console=enabled_console,
+    )
+    enabled_output = enabled_console.export_text()
+
+    assert enabled_exit == 0
+    assert "abnormal-norm" in enabled_output
+    assert "FINDINGS" in enabled_output
 
 
 def test_cli_shows_active_thresholds_on_pass(tmp_path: Path) -> None:
@@ -169,7 +301,7 @@ def test_cli_analyzes_bf16_only_checkpoint(tmp_path: Path) -> None:
     exit_code = run_cli(["analyze", str(checkpoint_path)], console=console)
 
     assert exit_code == 0
-    assert "PASSED" in console.export_text()
+    assert "NO FINDINGS" in console.export_text()
 
 
 def test_cli_rejects_overlapping_safetensors(tmp_path: Path) -> None:
@@ -183,4 +315,4 @@ def test_cli_rejects_overlapping_safetensors(tmp_path: Path) -> None:
 
     assert exit_code == 1
     assert "Analysis aborted" in console.export_text()
-    assert "PASSED" not in console.export_text()
+    assert "NO FINDINGS" not in console.export_text()

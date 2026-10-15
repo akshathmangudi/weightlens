@@ -12,10 +12,12 @@ from rich.text import Text
 
 from weightlens.contracts import Reporter
 from weightlens.models import (
+    AnalysisCoverage,
     AnalysisResult,
     CheckpointHealth,
     DiagnosticFlag,
     GlobalStats,
+    TensorOmission,
 )
 
 
@@ -26,7 +28,7 @@ class RichReporter(Reporter):
         self,
         console: Console | None = None,
         *,
-        thresholds: Mapping[str, float] | None = None,
+        thresholds: Mapping[str, float | str] | None = None,
     ) -> None:
         self._console = console or Console()
         self._thresholds = thresholds
@@ -41,7 +43,9 @@ class RichReporter(Reporter):
         self._console.print(self._build_health_section(result.health))
         self._console.print()
 
-        self._console.print("Global Stats", style="bold")
+        self._render_coverage(result.coverage)
+
+        self._console.print("Global Stats (analyzed tensors only)", style="bold")
         self._console.print(Rule(style="dim"))
         self._console.print(self._build_global_stats_section(result.global_stats))
         self._console.print()
@@ -52,10 +56,39 @@ class RichReporter(Reporter):
             self._console.print(self._build_thresholds_section(self._thresholds))
             self._console.print()
 
-        self._render_diagnostics(result.diagnostics)
+        self._render_diagnostics(result.diagnostics, partial=result.coverage.partial)
+
+    def _render_coverage(self, coverage: AnalysisCoverage) -> None:
+        self._console.print(
+            "Inspection: PARTIAL" if coverage.partial else "Inspection: COMPLETE",
+            style="yellow bold" if coverage.partial else "green",
+        )
+        excluded = sum(item.kind == "excluded" for item in coverage.omissions)
+        skipped = sum(item.kind == "skipped" for item in coverage.omissions)
+        self._console.print(
+            f"Coverage: {coverage.analyzed} of {coverage.eligible} eligible "
+            f"tensors analyzed; {excluded} excluded; {skipped} skipped."
+        )
+        if coverage.omissions:
+            self._console.print(self._build_omissions_section(coverage.omissions))
+        self._console.print()
 
     @staticmethod
-    def _build_thresholds_section(thresholds: Mapping[str, float]) -> Table:
+    def _build_omissions_section(omissions: list[TensorOmission]) -> Table:
+        table = Table(box=box.SIMPLE_HEAD, show_header=True, expand=True)
+        table.add_column("Status")
+        table.add_column("Tensor")
+        table.add_column("Reason")
+        table.add_column("Dtype")
+        for item in omissions:
+            table.add_row(
+                Text(item.kind), Text(item.name), Text(item.reason),
+                Text(item.dtype or "unknown"),
+            )
+        return table
+
+    @staticmethod
+    def _build_thresholds_section(thresholds: Mapping[str, float | str]) -> Table:
         table = Table.grid(padding=(0, 3))
         table.add_column("Flag", style="bold cyan")
         table.add_column("Value")
@@ -104,7 +137,9 @@ class RichReporter(Reporter):
         table.add_row("iqr_layer_norm:", f"{global_stats.iqr_layer_norm:.6g}")
         return table
 
-    def _render_diagnostics(self, diagnostics: Iterable[DiagnosticFlag]) -> None:
+    def _render_diagnostics(
+        self, diagnostics: Iterable[DiagnosticFlag], *, partial: bool = False
+    ) -> None:
         diagnostics_list = list(diagnostics)
         count = len(diagnostics_list)
 
@@ -140,35 +175,37 @@ class RichReporter(Reporter):
             self._console.print(table)
 
         self._console.print()
-        self._console.print(self._build_summary(diagnostics_list))
+        self._console.print(self._build_summary(diagnostics_list, partial=partial))
 
     @staticmethod
-    def _build_summary(diagnostics: list[DiagnosticFlag]) -> Panel:
+    def _build_summary(
+        diagnostics: list[DiagnosticFlag], *, partial: bool = False
+    ) -> Panel:
         errors = sum(1 for d in diagnostics if d.severity == "error")
         warns = sum(1 for d in diagnostics if d.severity == "warn")
+        infos = sum(1 for d in diagnostics if d.severity == "info")
 
-        if errors > 0:
-            parts = [f"{errors} error{'s' if errors != 1 else ''}"]
+        if diagnostics:
+            parts = []
+            if errors > 0:
+                parts.append(
+                    f"{errors} error-level finding{'s' if errors != 1 else ''}"
+                )
             if warns > 0:
                 parts.append(
                     f"{warns} warning{'s' if warns != 1 else ''}"
                 )
+            if infos > 0:
+                parts.append(f"{infos} info finding{'s' if infos != 1 else ''}")
             return Panel(
                 ", ".join(parts),
-                style="red bold",
-                title="FAILED",
-                title_align="left",
-            )
-        if warns > 0:
-            return Panel(
-                f"{warns} warning{'s' if warns != 1 else ''}",
-                style="yellow",
-                title="WARNINGS",
+                style="red bold" if errors else "yellow",
+                title="FINDINGS",
                 title_align="left",
             )
         return Panel(
-            "No issues detected",
+            "No findings in analyzed tensors" if partial else "No diagnostic findings",
             style="green",
-            title="PASSED",
+            title="NO FINDINGS",
             title_align="left",
         )
