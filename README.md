@@ -5,9 +5,7 @@
 [![Python](https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue.svg)]()
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Analyze ML checkpoint weights one tensor at a time. Detect corrupted weights, dead layers, exploding variance, and statistical anomalies across PyTorch, Safetensors, and DCP checkpoints.
-
-![demo](https://raw.githubusercontent.com/akshathmangudi/weightlens/main/demos/final.gif)
+Analyze ML checkpoint weights one tensor at a time. Report inspection gaps, dead layers, extreme values, and statistical anomalies across PyTorch, safetensors, and DCP checkpoints.
 
 ## Quick start
 
@@ -89,7 +87,7 @@ Time is I/O-bound on local NVMe. Phi-2 was a cold read across 2 safetensors shar
 - Compute Welford variance and merge signed logarithmic quantile counts across tensors. The p99 estimates preserve relative precision across small and large weight scales.
 - Process statistics in chunks of 1M elements. Peak memory also depends on the source format and the largest tensor.
 - Read safetensors from S3 or GCS via byte-range requests. No full download needed.
-- Identical results across .pth, .safetensors, and DCP formats
+- Apply the same analysis rules to .pth, .safetensors, and DCP formats.
 - Default diagnostic cutoffs are starting values. They are not calibrated model-health guarantees. Set them with `--variance-threshold`, `--spike-threshold`, and `--sparsity-threshold`. Pass `--norm-threshold N` to enable the experimental raw-L2 warning.
 
 ## Formats
@@ -100,6 +98,8 @@ Time is I/O-bound on local NVMe. Phi-2 was a cold read across 2 safetensors shar
 | Safetensors | .safetensors | Byte-range | Memory-mapped views |
 | Safetensors sharded | .index.json | Byte-range | Memory-mapped views per shard |
 | DCP | directory | Offline | Byte-offset reads from shard files |
+
+DCP support is experimental. Weightlens reports any DCP tensor that it cannot inspect as skipped and explains the reason.
 
 ```bash
 lens analyze model.pth
