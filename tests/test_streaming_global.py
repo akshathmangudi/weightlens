@@ -73,11 +73,11 @@ def test_streaming_global_aggregator_matches_numpy_small_set() -> None:
 
     np.testing.assert_allclose(stats.mean, expected["mean"], atol=1e-12)
     np.testing.assert_allclose(stats.std, expected["std"], atol=1e-12)
-    np.testing.assert_allclose(stats.p1, expected["p1"], atol=0.05)
-    np.testing.assert_allclose(stats.p5, expected["p5"], atol=0.05)
-    np.testing.assert_allclose(stats.p50, expected["p50"], atol=0.05)
-    np.testing.assert_allclose(stats.p95, expected["p95"], atol=0.05)
-    np.testing.assert_allclose(stats.p99, expected["p99"], atol=0.05)
+    np.testing.assert_allclose(stats.p1, expected["p1"], rtol=0.01, atol=1e-12)
+    np.testing.assert_allclose(stats.p5, expected["p5"], rtol=0.01, atol=1e-12)
+    np.testing.assert_allclose(stats.p50, expected["p50"], rtol=0.01, atol=1e-12)
+    np.testing.assert_allclose(stats.p95, expected["p95"], rtol=0.01, atol=1e-12)
+    np.testing.assert_allclose(stats.p99, expected["p99"], rtol=0.01, atol=1e-12)
     np.testing.assert_allclose(
         stats.median_layer_variance, expected_median_variance, atol=1e-12
     )
@@ -87,6 +87,27 @@ def test_streaming_global_aggregator_matches_numpy_small_set() -> None:
     np.testing.assert_allclose(
         stats.iqr_layer_norm, expected_iqr_norm, atol=1e-12
     )
+
+
+def test_global_quantiles_preserve_sign_and_zero() -> None:
+    values = np.concatenate(
+        [
+            np.full(2_000, -1e-4),
+            np.zeros(6_000),
+            np.full(2_000, 1e4),
+        ]
+    )
+    aggregator = StreamingGlobalAggregator()
+    aggregator.update(values)
+    aggregator.update_layer_stats(
+        _make_layer_stats(std=1.0, l2_norm=2.0, name="layer")
+    )
+
+    stats = aggregator.finalize()
+
+    for q, estimate in ((0.01, stats.p1), (0.5, stats.p50), (0.99, stats.p99)):
+        expected = float(np.quantile(values, q, method="linear"))
+        np.testing.assert_allclose(estimate, expected, rtol=0.01, atol=1e-12)
 
 
 def test_streaming_global_aggregator_is_incremental() -> None:
@@ -152,13 +173,9 @@ def test_streaming_global_aggregator_rejects_empty_finalize() -> None:
         aggregator.finalize()
 
 
-def test_streaming_global_aggregator_clamps_overflow_quantiles() -> None:
+def test_streaming_global_aggregator_preserves_extreme_values() -> None:
     values = np.array([-10.0, -1.0, 0.0, 1.0, 10.0], dtype=np.float64)
-    aggregator = StreamingGlobalAggregator(
-        histogram_bins=2048,
-        histogram_min=-1.0,
-        histogram_max=1.0,
-    )
+    aggregator = StreamingGlobalAggregator()
     aggregator.update(values)
     aggregator.update_layer_stats(
         _make_layer_stats(std=1.0, l2_norm=2.0, name="layer")
@@ -166,5 +183,9 @@ def test_streaming_global_aggregator_clamps_overflow_quantiles() -> None:
 
     stats = aggregator.finalize()
 
-    np.testing.assert_allclose(stats.p1, -1.0, atol=0.01)
-    np.testing.assert_allclose(stats.p99, 1.0, atol=0.01)
+    np.testing.assert_allclose(
+        stats.p1, np.quantile(values, 0.01), rtol=0.01
+    )
+    np.testing.assert_allclose(
+        stats.p99, np.quantile(values, 0.99), rtol=0.01
+    )

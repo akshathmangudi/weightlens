@@ -169,9 +169,7 @@ class PyTorchCheckpointValidator(CheckpointValidator):
             )
 
             if numel == 0:
-                flag = f"empty_tensor:{name}"
-                corruption_flags.append(flag)
-                logger.debug("Flagged %s.", flag)
+                logger.debug("Empty tensor %s has no values to check.", name)
                 continue
 
             try:
@@ -181,7 +179,7 @@ class PyTorchCheckpointValidator(CheckpointValidator):
                 corruption_flags.append(flag)
                 logger.exception("Tensor access failed for %s.", name)
 
-        is_empty = tensor_count == 0
+        is_empty = total_params == 0
 
         health = CheckpointHealth(
             file_size_bytes=file_size_bytes,

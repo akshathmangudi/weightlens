@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import numpy as np
 from numpy.typing import NDArray
@@ -37,6 +37,17 @@ class CheckpointHealth(BaseModel):
     corruption_flags: list[str]
 
 
+class SignedQuantileSummary(BaseModel):
+    """Mergeable counts for signed logarithmic quantile buckets."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    negative_counts: dict[int, int]
+    positive_counts: dict[int, int]
+    zeros: int
+    total: int
+
+
 class LayerStats(BaseModel):
     """Per-layer statistical metrics."""
 
@@ -52,6 +63,7 @@ class LayerStats(BaseModel):
     sparsity: float
     param_count: int
     p99_abs: float
+    quantile_summary: SignedQuantileSummary | None = None
     histogram_counts: list[float] | None = None
     histogram_underflow: int = 0
     histogram_overflow: int = 0
@@ -85,6 +97,31 @@ class DiagnosticFlag(BaseModel):
     severity: str
 
 
+class TensorOmission(BaseModel):
+    """A tensor that did not contribute to checkpoint statistics."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    name: str
+    kind: Literal["excluded", "skipped"]
+    reason: str
+    dtype: str | None = None
+
+
+class AnalysisCoverage(BaseModel):
+    """Account for tensors that did and did not enter statistics."""
+
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    analyzed: int
+    eligible: int
+    omissions: list[TensorOmission]
+
+    @property
+    def partial(self) -> bool:
+        return any(item.kind == "skipped" for item in self.omissions)
+
+
 class AnalysisResult(BaseModel):
     """Immutable analysis result bundle."""
 
@@ -95,3 +132,4 @@ class AnalysisResult(BaseModel):
     bucket_stats: dict[str, GlobalStats]
     diagnostics: list[DiagnosticFlag]
     health: CheckpointHealth
+    coverage: AnalysisCoverage

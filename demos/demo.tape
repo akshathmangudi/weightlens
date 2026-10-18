@@ -11,6 +11,7 @@ Set TypingSpeed 50ms
 Set Framerate 30
 
 Env FORCE_COLOR "1"
+Env PATH "/opt/homebrew/bin:/Users/akshath/.local/bin:/usr/local/bin:/usr/bin:/bin"
 
 Hide
 Type "clear" Enter
@@ -23,7 +24,7 @@ Sleep 2.5s
 
 Ctrl+L
 Sleep 200ms
-Type "uv run lens analyze artifacts/checkpoints/corrupted_spike.pth" Enter
+Type "lens analyze artifacts/checkpoints/corrupted_spike.pth" Enter
 Sleep 4s
 Sleep 2s
 Ctrl+L

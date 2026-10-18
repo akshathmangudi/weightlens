@@ -10,9 +10,10 @@ from pathlib import Path
 from typing import Any
 
 import torch
+from torch.distributed.checkpoint.metadata import Metadata
 
 from weightlens.contracts import WeightSource
-from weightlens.models import LayerTensor
+from weightlens.models import LayerTensor, TensorOmission
 from weightlens.tensor_utils import tensor_to_numpy
 
 logger = logging.getLogger(__name__)
@@ -43,60 +44,58 @@ def find_metadata_path(checkpoint_dir: str | Path) -> Path:
     )
 
 
-_UNSAFE_MODULES = frozenset({
-    "os", "subprocess", "builtins", "socket", "shutil",
-    "posix", "nt", "sys", "ctypes", "importlib",
-    "pdb", "code", "compile", "pty",
-})
+_ALLOWED_METADATA_GLOBALS = {
+    "torch": frozenset({"Size", "device"}),
+    "torch.distributed.checkpoint.metadata": frozenset(
+        {
+            "BytesStorageMetadata",
+            "ChunkStorageMetadata",
+            "Metadata",
+            "MetadataIndex",
+            "StorageMeta",
+            "TensorProperties",
+            "TensorStorageMetadata",
+            "_MEM_FORMAT_ENCODING",
+        }
+    ),
+    "torch.distributed.checkpoint.filesystem": frozenset({"_StorageInfo"}),
+    "torch.serialization": frozenset({"_get_layout"}),
+    "pathlib": frozenset({"PosixPath", "WindowsPath"}),
+    "pathlib._local": frozenset({"PosixPath", "WindowsPath"}),
+    "collections": frozenset({"OrderedDict"}),
+    "builtins": frozenset({"set", "frozenset", "slice"}),
+}
 
 
 class _SafeMetadataUnpickler(pickle.Unpickler):
-    """Unpickler that blocks unsafe modules and stubs missing ones.
+    """Load only globals used by supported PyTorch DCP metadata."""
 
-    DCP metadata files are pickled Python objects.  When a checkpoint was
-    saved by a framework like Megatron-LM, the pickle may reference
-    classes from ``megatron.core`` or similar packages that are not
-    installed in the analysis environment.  This unpickler creates
-    lightweight stub classes on the fly so the metadata can still be
-    loaded.
-
-    Potentially dangerous modules (os, subprocess, builtins, etc.) are
-    explicitly blocked regardless of availability.
-    """
-
-    def find_class(self, module: str, name: str) -> type:
-        if module in _UNSAFE_MODULES:
+    def find_class(self, module: str, name: str) -> Any:
+        allowed = name in _ALLOWED_METADATA_GLOBALS.get(module, ())
+        if module == "torch" and isinstance(getattr(torch, name, None), torch.dtype):
+            allowed = True
+        if not allowed:
             raise pickle.UnpicklingError(
-                f"Blocked import of potentially unsafe module: {module}.{name}"
+                f"DCP metadata global not allowed: {module}.{name}"
             )
-        try:
-            cls: type = super().find_class(module, name)
-            return cls
-        except (ModuleNotFoundError, AttributeError):
-            logger.debug(
-                "Stubbing missing class %s.%s during metadata unpickling.",
-                module,
-                name,
-            )
-            stub: type = type(name, (), {"__module__": module})
-            return stub
+        return super().find_class(module, name)
 
 
-def read_metadata(checkpoint_dir: str | Path) -> Any:
-    """Read DCP metadata through the safety-filtered unpickler.
-
-    Blocks dangerous modules (os, subprocess, etc.) and stubs
-    missing third-party classes so checkpoints created by
-    frameworks like Megatron-LM can still be loaded.
-    """
+def read_metadata(checkpoint_dir: str | Path) -> Metadata:
+    """Read supported DCP metadata with a restricted global allowlist."""
     meta_path = find_metadata_path(checkpoint_dir)
     with open(meta_path, "rb") as f:
-        return _SafeMetadataUnpickler(f).load()
+        metadata = _SafeMetadataUnpickler(f).load()
+    if not isinstance(metadata, Metadata):
+        raise ValueError("DCP metadata root must be a Metadata object")
+    return metadata
 
 
 def _validate_shard_path(checkpoint_dir: Path, rel_path: str) -> Path:
-    resolved = (checkpoint_dir / rel_path).resolve()
-    if not str(resolved).startswith(str(checkpoint_dir.resolve())):
+    root = checkpoint_dir.resolve()
+    relative = Path(rel_path)
+    resolved = (root / relative).resolve()
+    if relative.is_absolute() or resolved == root or not resolved.is_relative_to(root):
         raise ValueError(
             f"Shard path escapes checkpoint directory: {rel_path!r}"
         )
@@ -114,7 +113,12 @@ class DCPWeightSource(WeightSource):
     def __init__(self, checkpoint_dir: str | Path) -> None:
         self._checkpoint_dir = Path(checkpoint_dir)
 
-    def iter_layers(self) -> Iterator[LayerTensor]:  # noqa: C901
+    def iter_layers(self) -> Iterator[LayerTensor]:
+        for event in self.iter_events():
+            if isinstance(event, LayerTensor):
+                yield event
+
+    def iter_events(self) -> Iterator[LayerTensor | TensorOmission]:  # noqa: C901
         from torch.distributed.checkpoint.metadata import (
             MetadataIndex,
             TensorStorageMetadata,
@@ -160,11 +164,33 @@ class DCPWeightSource(WeightSource):
             dtype = storage_meta.properties.dtype
             if dtype not in _FLOAT_DTYPES:
                 logger.debug("Skipping non-float tensor %s (dtype=%s).", name, dtype)
+                unsupported = dtype.is_floating_point or dtype.is_complex
+                yield TensorOmission(
+                    name=name,
+                    kind="skipped" if unsupported else "excluded",
+                    reason=(
+                        "unsupported numeric dtype" if unsupported
+                        else "non-floating tensor"
+                    ),
+                    dtype=str(dtype),
+                )
                 continue
 
             chunk_info = storage_lookup.get(name, [])
             if not chunk_info:
-                logger.warning("No storage_data entries for tensor %s, skipping.", name)
+                logger.warning(
+                    "No usable DCP storage location for tensor %s, skipping.",
+                    name,
+                )
+                yield TensorOmission(
+                    name=name,
+                    kind="skipped",
+                    reason=(
+                        "DCP metadata has no usable storage location for this "
+                        "tensor. Its values were not inspected."
+                    ),
+                    dtype=str(dtype),
+                )
                 continue
 
             chunk_info.sort(key=lambda item: tuple(item[0]))

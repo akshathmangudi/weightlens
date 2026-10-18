@@ -3,7 +3,9 @@ from __future__ import annotations
 from pathlib import Path
 
 import numpy as np
+import torch
 from safetensors.numpy import load_file
+from safetensors.torch import save_file
 
 from tests.fixtures_safetensors import write_sharded, write_single
 from weightlens.sources.safetensors import SafetensorsWeightSource
@@ -34,6 +36,27 @@ def test_single_file_skips_integer_tensors(tmp_path: Path) -> None:
     write_single(path, tensors)
     names = [lt.name for lt in SafetensorsWeightSource(path).iter_layers()]
     assert names == ["w"]
+
+
+def test_local_mmap_reads_bf16_instead_of_skipping_it(tmp_path: Path) -> None:
+    path = tmp_path / "mixed.safetensors"
+    bf16 = torch.tensor([0.125, -2.0], dtype=torch.bfloat16)
+    save_file(
+        {
+            "f32.weight": torch.tensor([3.0], dtype=torch.float32),
+            "bf16.weight": bf16,
+        },
+        str(path),
+    )
+
+    layers = {
+        layer.name: layer.values
+        for layer in SafetensorsWeightSource(str(path), use_mmap=True).iter_layers()
+    }
+
+    assert set(layers) == {"f32.weight", "bf16.weight"}
+    np.testing.assert_array_equal(layers["bf16.weight"], bf16.float().numpy())
+    assert isinstance(layers["f32.weight"], np.memmap)
 
 
 def test_single_file_over_memory_matches_local(tmp_path: Path) -> None:

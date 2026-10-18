@@ -132,24 +132,25 @@ class DCPCheckpointValidator(CheckpointValidator):
                 numel *= dim
             total_params += numel
 
-            if numel == 0:
-                flag = f"empty_tensor:{key}"
-                corruption_flags.append(flag)
-                logger.debug("Flagged %s.", flag)
-
         # Phase 7: cross-reference shard files from storage_data
         referenced_files: set[str] = set()
         for _idx, info in metadata.storage_data.items():
             referenced_files.add(info.relative_path)
 
         for ref_file in sorted(referenced_files):
-            ref_path = _validate_shard_path(self._checkpoint_dir, ref_file)
+            try:
+                ref_path = _validate_shard_path(self._checkpoint_dir, ref_file)
+            except ValueError:
+                flag = f"unsafe_shard_path:{ref_file}"
+                corruption_flags.append(flag)
+                logger.debug("Flagged %s.", flag)
+                continue
             if not ref_path.exists():
                 flag = f"missing_shard:{ref_file}"
                 corruption_flags.append(flag)
                 logger.debug("Flagged %s.", flag)
 
-        is_empty = tensor_count == 0
+        is_empty = total_params == 0
         loadable = not any(
             f
             in (
@@ -158,7 +159,10 @@ class DCPCheckpointValidator(CheckpointValidator):
                 "metadata_read_failed",
             )
             for f in corruption_flags
-        ) and not any(f.startswith("missing_shard:") for f in corruption_flags)
+        ) and not any(
+            f.startswith(("missing_shard:", "unsafe_shard_path:"))
+            for f in corruption_flags
+        )
 
         health = CheckpointHealth(
             file_size_bytes=dir_size,

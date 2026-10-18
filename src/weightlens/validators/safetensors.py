@@ -10,6 +10,7 @@ from weightlens.formats.safetensors_header import (
     TensorSlice,
     parse_header,
     read_header_len,
+    validate_layout,
 )
 from weightlens.formats.safetensors_index import parse_index
 from weightlens.io.byte_range import ByteRangeReader
@@ -41,14 +42,9 @@ class SafetensorsCheckpointValidator(CheckpointValidator):
     def _check_offsets(
         header_len: int, slices: dict[str, TensorSlice], file_size: int
     ) -> None:
-        """Reject a header whose tensor data extends past the end of the file."""
+        """Require tensor ranges to cover the file data exactly once."""
         base = HEADER_LEN_BYTES + header_len
-        for s in slices.values():
-            if base + s.end > file_size:
-                raise ValueError(
-                    f"tensor {s.name!r} data extends past end of file "
-                    f"(needs {base + s.end} bytes, file is {file_size})"
-                )
+        validate_layout(slices, file_size - base)
 
     def _validate_single(self, uri: str) -> tuple[int, int, int]:
         reader = self._reader(uri)
@@ -64,12 +60,21 @@ class SafetensorsCheckpointValidator(CheckpointValidator):
         weight_map = parse_index(index_reader.read(0, index_reader.size()))
         base = parent_uri(self._uri)
         shard_files = sorted(set(weight_map.values()))
+        wanted_by_shard: dict[str, set[str]] = {
+            shard_file: set() for shard_file in shard_files
+        }
+        for name, shard_file in weight_map.items():
+            wanted_by_shard[shard_file].add(name)
         size = count = params = 0
         for shard_file in shard_files:
             reader = self._reader(join_uri(base, shard_file))
             shard_size = reader.size()
             header_len, slices = self._header(reader)
             self._check_offsets(header_len, slices, shard_size)
+            if set(slices) != wanted_by_shard[shard_file]:
+                raise ValueError(
+                    f"safetensors index disagrees with shard {shard_file!r}"
+                )
             floats = [s for s in slices.values() if s.is_float]
             size += shard_size
             count += len(floats)
@@ -100,7 +105,7 @@ class SafetensorsCheckpointValidator(CheckpointValidator):
             )
         return CheckpointHealth(
             file_size_bytes=size,
-            is_empty=(count == 0),
+            is_empty=(params == 0),
             loadable=True,
             tensor_count=count,
             total_params=params,

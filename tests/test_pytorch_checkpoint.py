@@ -68,7 +68,7 @@ def test_validator_flags_non_tensor_entries(
     assert health.total_params == 1
 
 
-def test_validator_flags_empty_tensor(tmp_path: Path) -> None:
+def test_validator_counts_empty_tensor_without_corruption_flag(tmp_path: Path) -> None:
     state: OrderedDict[str, torch.Tensor] = OrderedDict(
         empty=torch.empty(0, dtype=torch.float32),
         ok=torch.tensor([1.0], dtype=torch.float32),
@@ -79,9 +79,23 @@ def test_validator_flags_empty_tensor(tmp_path: Path) -> None:
     validator = PyTorchCheckpointValidator(checkpoint_path)
     health = validator.validate()
 
-    assert "empty_tensor:empty" in health.corruption_flags
+    assert health.loadable is True
+    assert health.corruption_flags == []
     assert health.tensor_count == 2
     assert health.total_params == 1
+
+
+def test_validator_marks_only_empty_tensors_as_empty(tmp_path: Path) -> None:
+    checkpoint_path = tmp_path / "only-empty.pth"
+    torch.save({"empty.weight": torch.empty(0)}, checkpoint_path)
+
+    health = PyTorchCheckpointValidator(checkpoint_path).validate()
+
+    assert health.loadable is True
+    assert health.is_empty is True
+    assert health.tensor_count == 1
+    assert health.total_params == 0
+    assert health.corruption_flags == []
 
 
 def test_validator_flags_nan_and_zero_floods(tmp_path: Path) -> None:

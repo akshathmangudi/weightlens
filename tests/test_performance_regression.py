@@ -28,11 +28,11 @@ from weightlens.diagnostics import (
     ExplodingVarianceRule,
     ExtremeSpikeRule,
 )
-from weightlens.histogram_quantiles import FixedRangeHistogramQuantiles
 from weightlens.models import AnalysisResult, CheckpointHealth, LayerTensor
 from weightlens.sources.pytorch import PyTorchWeightSource
 from weightlens.sources.safetensors import SafetensorsWeightSource
 from weightlens.stats_engines.basic_stats_engine import BasicStatsEngine
+from weightlens.stats_engines.signed_log_quantiles import SignedLogQuantiles
 from weightlens.validators.pytorch_checkpoint import PyTorchCheckpointValidator
 from weightlens.validators.safetensors import SafetensorsCheckpointValidator
 
@@ -127,25 +127,23 @@ def _run_full_analysis_pytorch(
 # ═══════════════════════════════════════════════════════════════════════
 
 
-class _CountingHistogram(FixedRangeHistogramQuantiles):
+class _CountingSignedSketch(SignedLogQuantiles):
     update_calls: int = 0
 
     def update(self, values: NDArray[np.number]) -> None:
-        _CountingHistogram.update_calls += 1
+        _CountingSignedSketch.update_calls += 1
         return super().update(values)
 
 
 class _CountingAggregator(StreamingGlobalAggregator):
     def __init__(self) -> None:
         super().__init__()
-        self._quantiles = _CountingHistogram(
-            min_value=-100.0, max_value=100.0, bins=4096
-        )
+        self._quantiles = _CountingSignedSketch()
 
 
-def test_histogram_scan_called_at_most_n_times() -> None:
+def test_global_sketch_does_not_rescan_layers() -> None:
     N = 7
-    _CountingHistogram.update_calls = 0
+    _CountingSignedSketch.update_calls = 0
     source = _SyntheticSource(n=N, size=256)
     aggregator = _CountingAggregator()
     analyzer = Analyzer(
@@ -158,9 +156,9 @@ def test_histogram_scan_called_at_most_n_times() -> None:
         num_workers=1,
     )
     analyzer.analyze()
-    assert _CountingHistogram.update_calls == 0, (
-        f"histogram scanned {_CountingHistogram.update_calls} times "
-        f"for {N} layers (expected 0 — merge_histogram should be used instead)"
+    assert _CountingSignedSketch.update_calls == 0, (
+        f"global sketch scanned {_CountingSignedSketch.update_calls} times "
+        f"for {N} layers (expected 0 because summaries are merged)"
     )
 
 
@@ -177,7 +175,7 @@ def test_no_numpy_quantile_on_large_tensors() -> None:
         result = engine.compute_layer(layer)
         assert isinstance(result.p99_abs, float)
     assert spy.call_count == 0, (
-        "np.quantile must not be called — histogram-based p99 is used instead. "
+        "np.quantile must not be called during streaming analysis. "
         "If this is >0, the hot path regressed to O(n log n)."
     )
 

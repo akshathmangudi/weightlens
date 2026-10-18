@@ -101,6 +101,12 @@ def test_analyzer_happy_path(tmp_path: Path) -> None:
     assert result.health.loadable is True
     assert result.health.is_empty is False
     assert len(result.layer_stats) == 2
+    assert result.coverage.analyzed == 2
+    assert result.coverage.eligible == 2
+    assert not result.coverage.partial
+    assert [(item.name, item.kind) for item in result.coverage.omissions] == [
+        ("int_layer", "excluded")
+    ]
     assert isinstance(result.diagnostics, list)
     for field in (
         "mean",
@@ -115,6 +121,70 @@ def test_analyzer_happy_path(tmp_path: Path) -> None:
         "iqr_layer_norm",
     ):
         assert math.isfinite(float(getattr(result.global_stats, field)))
+
+
+@pytest.mark.parametrize("workers", [1, 4])
+def test_partial_inspection_names_actual_skip_reasons(
+    tmp_path: Path, workers: int
+) -> None:
+    checkpoint_path = tmp_path / "mixed.pth"
+    torch.save(
+        {
+            "good.weight": torch.tensor([2.0, 2.0]),
+            "empty.weight": torch.empty(0),
+            "bad.weight": torch.tensor([float("nan")]),
+            "step": torch.tensor(3),
+        },
+        checkpoint_path,
+    )
+    result = Analyzer(
+        source=PyTorchWeightSource(checkpoint_path),
+        validator=PyTorchCheckpointValidator(checkpoint_path),
+        stats_engine=BasicStatsEngine(),
+        aggregator=StreamingGlobalAggregator(),
+        rules=[],
+        num_workers=workers,
+        prefetch=False,
+    ).analyze()
+
+    assert result.coverage.partial
+    assert result.coverage.analyzed == 1
+    assert result.coverage.eligible == 3
+    assert result.global_stats.mean == pytest.approx(2.0)
+    omissions = {
+        (item.name, item.kind, item.reason) for item in result.coverage.omissions
+    }
+    assert omissions == {
+        ("empty.weight", "skipped", "empty tensor"),
+        ("bad.weight", "skipped", "NaN or Inf values"),
+        ("step", "excluded", "non-floating tensor"),
+    }
+    assert {(flag.layer, flag.rule, flag.severity) for flag in result.diagnostics} == {
+        ("empty.weight", "empty-tensor", "warn"),
+        ("bad.weight", "non-finite-values", "error"),
+    }
+
+
+@pytest.mark.parametrize("weight", [1e-4, -1e-4, 1000.0, -1000.0])
+def test_global_p99_tracks_checkpoint_scale(tmp_path: Path, weight: float) -> None:
+    values = np.full(10_000, weight, dtype=np.float32)
+    checkpoint_path = tmp_path / "scaled.pth"
+    torch.save({"layer.weight": torch.from_numpy(values)}, checkpoint_path)
+    analyzer = Analyzer(
+        source=PyTorchWeightSource(checkpoint_path),
+        validator=PyTorchCheckpointValidator(checkpoint_path),
+        stats_engine=BasicStatsEngine(),
+        aggregator=StreamingGlobalAggregator(),
+        rules=[],
+        classifier=PyTorchParameterClassifier(),
+        num_workers=1,
+        prefetch=False,
+    )
+
+    result = analyzer.analyze()
+
+    expected = float(np.quantile(values, 0.99, method="linear"))
+    np.testing.assert_allclose(result.global_stats.p99, expected, rtol=0.01)
 
 
 def test_analyzer_aborts_on_unhealthy_checkpoint() -> None:

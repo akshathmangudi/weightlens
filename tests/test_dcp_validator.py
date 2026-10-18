@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import pickle
 import warnings
 from pathlib import Path
 
 import torch
 from torch.distributed.checkpoint.state_dict_saver import save as dcp_save
 
+from weightlens.sources.dcp import read_metadata
 from weightlens.validators.dcp_checkpoint import DCPCheckpointValidator
 
 
@@ -36,6 +38,36 @@ def test_healthy_checkpoint(tmp_path: Path) -> None:
     assert health.total_params == 32 * 32 + 32
     assert health.corruption_flags == []
     assert health.file_size_bytes > 0
+
+
+def test_validator_counts_empty_tensor_without_corruption_flag(
+    tmp_path: Path,
+) -> None:
+    checkpoint = tmp_path / "ckpt"
+    _save_dcp(
+        checkpoint,
+        {"empty.weight": torch.empty(0), "ok.weight": torch.ones(1)},
+    )
+
+    health = DCPCheckpointValidator(checkpoint).validate()
+
+    assert health.loadable is True
+    assert health.corruption_flags == []
+    assert health.tensor_count == 2
+    assert health.total_params == 1
+
+
+def test_validator_marks_only_empty_tensors_as_empty(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "ckpt"
+    _save_dcp(checkpoint, {"empty.weight": torch.empty(0)})
+
+    health = DCPCheckpointValidator(checkpoint).validate()
+
+    assert health.loadable is True
+    assert health.is_empty is True
+    assert health.tensor_count == 1
+    assert health.total_params == 0
+    assert health.corruption_flags == []
 
 
 # ------------------------------------------------------------------
@@ -112,6 +144,25 @@ def test_missing_referenced_shard(tmp_path: Path) -> None:
 
     assert health.loadable is False
     assert any(f.startswith("missing_shard:") for f in health.corruption_flags)
+
+
+def test_shard_path_outside_directory_is_not_loadable(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "ckpt"
+    _save_dcp(checkpoint, {"w": torch.randn(4, 4)})
+    sibling = tmp_path / "ckpt-other"
+    sibling.mkdir()
+    (sibling / "shard.distcp").write_bytes(b"other file")
+    metadata = read_metadata(checkpoint)
+    next(iter(metadata.storage_data.values())).relative_path = (
+        "../ckpt-other/shard.distcp"
+    )
+    with (checkpoint / ".metadata").open("wb") as handle:
+        pickle.dump(metadata, handle)
+
+    health = DCPCheckpointValidator(checkpoint).validate()
+
+    assert health.loadable is False
+    assert any(f.startswith("unsafe_shard_path:") for f in health.corruption_flags)
 
 
 # ------------------------------------------------------------------

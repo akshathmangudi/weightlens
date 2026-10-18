@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+import pickle
 import warnings
 from pathlib import Path
 
@@ -8,7 +10,12 @@ import pytest
 import torch
 from torch.distributed.checkpoint.state_dict_saver import save as dcp_save
 
-from weightlens.sources.dcp import DCPWeightSource
+from weightlens.models import TensorOmission
+from weightlens.sources.dcp import (
+    DCPWeightSource,
+    _validate_shard_path,
+    read_metadata,
+)
 
 
 def _save_dcp(path: Path, state_dict: dict[str, torch.Tensor]) -> None:
@@ -89,6 +96,15 @@ def test_skips_non_float_tensors(tmp_path: Path) -> None:
     assert len(layers) == 1
     assert layers[0].name == "float_layer"
 
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore")
+        events = list(DCPWeightSource(tmp_path / "ckpt").iter_events())
+    omissions = [event for event in events if isinstance(event, TensorOmission)]
+    assert {(item.name, item.kind) for item in omissions} == {
+        ("int_step", "excluded"),
+        ("long_counter", "excluded"),
+    }
+
 
 # ------------------------------------------------------------------
 # Metadata naming conventions
@@ -145,6 +161,25 @@ def test_raises_on_missing_metadata(tmp_path: Path) -> None:
         warnings.simplefilter("ignore")
         with pytest.raises(FileNotFoundError):
             list(DCPWeightSource(tmp_path / "ckpt").iter_layers())
+
+
+def test_rejects_sibling_shard_path(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "ckpt"
+    checkpoint.mkdir()
+    sibling = tmp_path / "ckpt-other"
+    sibling.mkdir()
+
+    with pytest.raises(ValueError, match="escapes checkpoint directory"):
+        _validate_shard_path(checkpoint, "../ckpt-other/shard.distcp")
+
+
+def test_metadata_loader_rejects_unlisted_callable(tmp_path: Path) -> None:
+    checkpoint = tmp_path / "ckpt"
+    checkpoint.mkdir()
+    (checkpoint / ".metadata").write_bytes(pickle.dumps(math.sqrt))
+
+    with pytest.raises(pickle.UnpicklingError, match="not allowed"):
+        read_metadata(checkpoint)
 
 
 # ------------------------------------------------------------------

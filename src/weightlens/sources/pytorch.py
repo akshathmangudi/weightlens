@@ -8,7 +8,7 @@ from typing import cast
 import torch
 
 from weightlens.contracts import WeightSource
-from weightlens.models import LayerTensor
+from weightlens.models import LayerTensor, TensorOmission
 from weightlens.tensor_utils import tensor_to_numpy
 from weightlens.validators.pytorch_checkpoint import (
     _extract_state_dict,
@@ -25,6 +25,11 @@ class PyTorchWeightSource(WeightSource):
         self._checkpoint_path = Path(checkpoint_path)
 
     def iter_layers(self) -> Iterator[LayerTensor]:
+        for event in self.iter_events():
+            if isinstance(event, LayerTensor):
+                yield event
+
+    def iter_events(self) -> Iterator[LayerTensor | TensorOmission]:
         checkpoint = _load_checkpoint(self._checkpoint_path)
 
         if not isinstance(checkpoint, Mapping):
@@ -45,10 +50,20 @@ class PyTorchWeightSource(WeightSource):
                     logger.debug("Skipping non-tensor entry %s.", name)
                     continue
                 if not tensor.is_floating_point():
+                    unsupported = tensor.is_complex()
                     logger.debug(
                         "Skipping non-float tensor %s (dtype=%s).",
                         name,
                         tensor.dtype,
+                    )
+                    yield TensorOmission(
+                        name=str(name),
+                        kind="skipped" if unsupported else "excluded",
+                        reason=(
+                            "unsupported complex dtype" if unsupported
+                            else "non-floating tensor"
+                        ),
+                        dtype=str(tensor.dtype),
                     )
                     continue
 

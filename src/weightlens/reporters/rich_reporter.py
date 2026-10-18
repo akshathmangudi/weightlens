@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
 from rich import box
 from rich.console import Console
@@ -12,18 +12,26 @@ from rich.text import Text
 
 from weightlens.contracts import Reporter
 from weightlens.models import (
+    AnalysisCoverage,
     AnalysisResult,
     CheckpointHealth,
     DiagnosticFlag,
     GlobalStats,
+    TensorOmission,
 )
 
 
 class RichReporter(Reporter):
     """Render analysis results using Rich tables."""
 
-    def __init__(self, console: Console | None = None) -> None:
+    def __init__(
+        self,
+        console: Console | None = None,
+        *,
+        thresholds: Mapping[str, float | str] | None = None,
+    ) -> None:
         self._console = console or Console()
+        self._thresholds = thresholds
 
     def render(self, result: AnalysisResult, filename: str) -> None:
         self._console.print()
@@ -35,12 +43,58 @@ class RichReporter(Reporter):
         self._console.print(self._build_health_section(result.health))
         self._console.print()
 
-        self._console.print("Global Stats", style="bold")
+        self._render_coverage(result.coverage)
+
+        self._console.print("Global Stats (analyzed tensors only)", style="bold")
         self._console.print(Rule(style="dim"))
         self._console.print(self._build_global_stats_section(result.global_stats))
         self._console.print()
 
-        self._render_diagnostics(result.diagnostics)
+        if self._thresholds is not None:
+            self._console.print("Diagnostic thresholds", style="bold")
+            self._console.print(Rule(style="dim"))
+            self._console.print(self._build_thresholds_section(self._thresholds))
+            self._console.print()
+
+        self._render_diagnostics(result.diagnostics, partial=result.coverage.partial)
+
+    def _render_coverage(self, coverage: AnalysisCoverage) -> None:
+        self._console.print(
+            "Inspection: PARTIAL" if coverage.partial else "Inspection: COMPLETE",
+            style="yellow bold" if coverage.partial else "green",
+        )
+        excluded = sum(item.kind == "excluded" for item in coverage.omissions)
+        skipped = sum(item.kind == "skipped" for item in coverage.omissions)
+        self._console.print(
+            f"Coverage: {coverage.analyzed} of {coverage.eligible} eligible "
+            f"tensors analyzed; {excluded} excluded; {skipped} skipped."
+        )
+        if coverage.omissions:
+            self._console.print(self._build_omissions_section(coverage.omissions))
+        self._console.print()
+
+    @staticmethod
+    def _build_omissions_section(omissions: list[TensorOmission]) -> Table:
+        table = Table(box=box.SIMPLE_HEAD, show_header=True, expand=True)
+        table.add_column("Status")
+        table.add_column("Tensor")
+        table.add_column("Reason")
+        table.add_column("Dtype")
+        for item in omissions:
+            table.add_row(
+                Text(item.kind), Text(item.name), Text(item.reason),
+                Text(item.dtype or "unknown"),
+            )
+        return table
+
+    @staticmethod
+    def _build_thresholds_section(thresholds: Mapping[str, float | str]) -> Table:
+        table = Table.grid(padding=(0, 3))
+        table.add_column("Flag", style="bold cyan")
+        table.add_column("Value")
+        for name, value in thresholds.items():
+            table.add_row(name, str(value))
+        return table
 
     @staticmethod
     def _build_health_section(health: CheckpointHealth) -> Table:
@@ -69,21 +123,23 @@ class RichReporter(Reporter):
         table.add_column("Metric", style="bold cyan")
         table.add_column("Value")
 
-        table.add_row("mean:", f"{global_stats.mean:.6f}")
-        table.add_row("std:", f"{global_stats.std:.6f}")
-        table.add_row("p99:", f"{global_stats.p99:.6f}")
+        table.add_row("mean:", f"{global_stats.mean:.6g}")
+        table.add_row("std:", f"{global_stats.std:.6g}")
+        table.add_row("p99:", f"{global_stats.p99:.6g}")
         table.add_row(
             "median_layer_variance:",
-            f"{global_stats.median_layer_variance:.6f}",
+            f"{global_stats.median_layer_variance:.6g}",
         )
         table.add_row(
             "median_layer_norm:",
-            f"{global_stats.median_layer_norm:.6f}",
+            f"{global_stats.median_layer_norm:.6g}",
         )
-        table.add_row("iqr_layer_norm:", f"{global_stats.iqr_layer_norm:.6f}")
+        table.add_row("iqr_layer_norm:", f"{global_stats.iqr_layer_norm:.6g}")
         return table
 
-    def _render_diagnostics(self, diagnostics: Iterable[DiagnosticFlag]) -> None:
+    def _render_diagnostics(
+        self, diagnostics: Iterable[DiagnosticFlag], *, partial: bool = False
+    ) -> None:
         diagnostics_list = list(diagnostics)
         count = len(diagnostics_list)
 
@@ -119,35 +175,37 @@ class RichReporter(Reporter):
             self._console.print(table)
 
         self._console.print()
-        self._console.print(self._build_summary(diagnostics_list))
+        self._console.print(self._build_summary(diagnostics_list, partial=partial))
 
     @staticmethod
-    def _build_summary(diagnostics: list[DiagnosticFlag]) -> Panel:
+    def _build_summary(
+        diagnostics: list[DiagnosticFlag], *, partial: bool = False
+    ) -> Panel:
         errors = sum(1 for d in diagnostics if d.severity == "error")
         warns = sum(1 for d in diagnostics if d.severity == "warn")
+        infos = sum(1 for d in diagnostics if d.severity == "info")
 
-        if errors > 0:
-            parts = [f"{errors} error{'s' if errors != 1 else ''}"]
+        if diagnostics:
+            parts = []
+            if errors > 0:
+                parts.append(
+                    f"{errors} error-level finding{'s' if errors != 1 else ''}"
+                )
             if warns > 0:
                 parts.append(
                     f"{warns} warning{'s' if warns != 1 else ''}"
                 )
+            if infos > 0:
+                parts.append(f"{infos} info finding{'s' if infos != 1 else ''}")
             return Panel(
                 ", ".join(parts),
-                style="red bold",
-                title="FAILED",
-                title_align="left",
-            )
-        if warns > 0:
-            return Panel(
-                f"{warns} warning{'s' if warns != 1 else ''}",
-                style="yellow",
-                title="WARNINGS",
+                style="red bold" if errors else "yellow",
+                title="FINDINGS",
                 title_align="left",
             )
         return Panel(
-            "No issues detected",
+            "No findings in analyzed tensors" if partial else "No diagnostic findings",
             style="green",
-            title="PASSED",
+            title="NO FINDINGS",
             title_align="left",
         )

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterator
+from pathlib import Path
 
 import numpy as np
 
@@ -12,11 +13,12 @@ from weightlens.formats.safetensors_header import (
     decode_float_tensor,
     parse_header,
     read_header_len,
+    validate_layout,
 )
 from weightlens.formats.safetensors_index import parse_index
 from weightlens.io.byte_range import ByteRangeReader
 from weightlens.io.uri import join_uri, parent_uri
-from weightlens.models import LayerTensor
+from weightlens.models import LayerTensor, TensorOmission
 
 logger = logging.getLogger(__name__)
 
@@ -68,23 +70,46 @@ class SafetensorsWeightSource(WeightSource):
 
     def _stream_mmap(
         self, uri: str, wanted: set[str] | None
-    ) -> Iterator[LayerTensor]:
+    ) -> Iterator[LayerTensor | TensorOmission]:
         header_len, header_bytes, resolved = self._load_header_bytes(uri)
         _, slices = parse_header(header_bytes)
+        validate_layout(
+            slices,
+            Path(resolved).stat().st_size - HEADER_LEN_BYTES - header_len,
+        )
+        if wanted is not None and set(slices) != wanted:
+            raise ValueError(f"safetensors index disagrees with shard {uri!r}")
         for name, sl in slices.items():
             if wanted is not None and name not in wanted:
                 continue
             if not sl.is_float:
                 logger.debug("Skipping non-float tensor %s (dtype=%s).", name, sl.dtype)
+                unsupported = sl.dtype.startswith(("F", "BF", "C"))
+                yield TensorOmission(
+                    name=name,
+                    kind="skipped" if unsupported else "excluded",
+                    reason=(
+                        "unsupported numeric dtype" if unsupported
+                        else "non-floating tensor"
+                    ),
+                    dtype=sl.dtype,
+                )
                 continue
-            offset, _length = sl.absolute_range(header_len)
+            offset, length = sl.absolute_range(header_len)
             dtype = _NP_LE.get(sl.dtype)
             if dtype is None:
-                logger.debug("Skipping unsupported dtype %s for %s.", sl.dtype, name)
-                continue
-            arr = np.memmap(
-                resolved, dtype=dtype, mode="r", offset=offset, shape=sl.shape
-            )
+                if sl.dtype != "BF16":
+                    raise ValueError(f"unsupported float dtype {sl.dtype!r}")
+                with open(resolved, "rb") as f:  # noqa: ASYNC230
+                    f.seek(offset)
+                    raw = f.read(length)
+                if len(raw) != length:
+                    raise ValueError(f"short read for tensor {name!r}")
+                arr = decode_float_tensor(raw, sl)
+            else:
+                arr = np.memmap(
+                    resolved, dtype=dtype, mode="r", offset=offset, shape=sl.shape
+                )
             logger.debug("Yielding %s shape=%s dtype=%s.", name, sl.shape, arr.dtype)
             yield LayerTensor(
                 name=name, values=arr, shape=sl.shape, dtype=str(arr.dtype)
@@ -99,17 +124,31 @@ class SafetensorsWeightSource(WeightSource):
             if "Short read" in str(exc):
                 raise ValueError("truncated safetensors file") from exc
             raise
-        return parse_header(header_bytes)
+        parsed_len, slices = parse_header(header_bytes)
+        validate_layout(slices, reader.size() - HEADER_LEN_BYTES - parsed_len)
+        return parsed_len, slices
 
     def _stream_reader(
         self, reader: ByteRangeReader, wanted: set[str] | None
-    ) -> Iterator[LayerTensor]:
+    ) -> Iterator[LayerTensor | TensorOmission]:
         header_len, slices = self._load_header(reader)
+        if wanted is not None and set(slices) != wanted:
+            raise ValueError(f"safetensors index disagrees with shard {reader.uri!r}")
         for name, sl in slices.items():
             if wanted is not None and name not in wanted:
                 continue
             if not sl.is_float:
                 logger.debug("Skipping non-float tensor %s (dtype=%s).", name, sl.dtype)
+                unsupported = sl.dtype.startswith(("F", "BF", "C"))
+                yield TensorOmission(
+                    name=name,
+                    kind="skipped" if unsupported else "excluded",
+                    reason=(
+                        "unsupported numeric dtype" if unsupported
+                        else "non-floating tensor"
+                    ),
+                    dtype=sl.dtype,
+                )
                 continue
             offset, length = sl.absolute_range(header_len)
             raw = reader.read(offset, length)
@@ -119,13 +158,13 @@ class SafetensorsWeightSource(WeightSource):
                 name=name, values=values, shape=sl.shape, dtype=str(values.dtype)
             )
 
-    def _iter_single(self, uri: str) -> Iterator[LayerTensor]:
+    def _iter_single(self, uri: str) -> Iterator[LayerTensor | TensorOmission]:
         if self._use_mmap and self._is_local(uri):
             yield from self._stream_mmap(uri, wanted=None)
         else:
             yield from self._stream_reader(self._reader(uri), wanted=None)
 
-    def _iter_sharded(self) -> Iterator[LayerTensor]:
+    def _iter_sharded(self) -> Iterator[LayerTensor | TensorOmission]:
         index_reader = self._reader(self._uri)
         weight_map = parse_index(index_reader.read(0, index_reader.size()))
         base = parent_uri(self._uri)
@@ -149,6 +188,11 @@ class SafetensorsWeightSource(WeightSource):
                 )
 
     def iter_layers(self) -> Iterator[LayerTensor]:
+        for event in self.iter_events():
+            if isinstance(event, LayerTensor):
+                yield event
+
+    def iter_events(self) -> Iterator[LayerTensor | TensorOmission]:
         if self._is_index():
             yield from self._iter_sharded()
         else:

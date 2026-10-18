@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import warnings
 from collections.abc import Sequence
 from pathlib import Path
@@ -13,7 +14,7 @@ from rich.table import Table
 from weightlens.aggregators import StreamingGlobalAggregator
 from weightlens.analyzer import Analyzer
 from weightlens.classifiers import DCPParameterClassifier, PyTorchParameterClassifier
-from weightlens.contracts import CheckpointValidator
+from weightlens.contracts import CheckpointValidator, DiagnosticRule
 from weightlens.diagnostics import (
     AbnormalNormRule,
     DeadLayerRule,
@@ -23,7 +24,7 @@ from weightlens.diagnostics import (
 from weightlens.io import materialize
 from weightlens.io.errors import MissingBackendError
 from weightlens.io.uri import anon_storage_options, is_remote
-from weightlens.models import CheckpointHealth
+from weightlens.models import AnalysisResult, CheckpointHealth
 from weightlens.reporters import RichReporter
 from weightlens.sources import PyTorchWeightSource, SafetensorsWeightSource
 from weightlens.stats_engines import BasicStatsEngine
@@ -91,25 +92,28 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     analyze.add_argument(
         "--variance-threshold",
-        type=float,
+        type=_parse_positive_finite,
         default=10.0,
         help="Variance ratio for exploding-variance detection (default: 10.0)",
     )
     analyze.add_argument(
         "--spike-threshold",
-        type=float,
+        type=_parse_positive_finite,
         default=100.0,
         help="max_abs/p99_abs for extreme-spike detection (default: 100.0)",
     )
     analyze.add_argument(
         "--norm-threshold",
-        type=float,
-        default=5.0,
-        help="IQR z-score for abnormal-norm detection (default: 5.0)",
+        type=_parse_positive_finite,
+        default=None,
+        help=(
+            "Enable experimental raw-L2 abnormal-norm detection at this "
+            "IQR cutoff (off by default)"
+        ),
     )
     analyze.add_argument(
         "--sparsity-threshold",
-        type=float,
+        type=_parse_fraction,
         default=0.9999,
         help="Zero-fraction for dead-layer detection (default: 0.9999)",
     )
@@ -170,6 +174,17 @@ def _render_health(console: Console, health: CheckpointHealth) -> None:
     console.print(table)
 
 
+def _abort_unusable_health(console: Console, health: CheckpointHealth) -> int:
+    _render_health(console, health)
+    if health.loadable and health.is_empty and health.tensor_count > 0:
+        console.print(
+            "Analysis aborted: checkpoint contains tensors but no values to analyze."
+        )
+    else:
+        console.print("Analysis aborted: checkpoint not loadable or empty.")
+    return 1
+
+
 def _parse_num_workers(value: str) -> int | None:
     if value == "auto":
         return None
@@ -186,6 +201,63 @@ def _parse_num_workers(value: str) -> int | None:
     return n
 
 
+def _parse_positive_finite(value: str) -> float:
+    error = "Value must be finite and greater than 0"
+    try:
+        number = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(error) from None
+    if not math.isfinite(number) or number <= 0:
+        raise argparse.ArgumentTypeError(error)
+    return number
+
+
+def _parse_fraction(value: str) -> float:
+    number = _parse_positive_finite(value)
+    if number > 1:
+        raise argparse.ArgumentTypeError("Value must be greater than 0 and at most 1")
+    return number
+
+
+def _build_rules(
+    *,
+    variance_threshold: float,
+    spike_threshold: float,
+    norm_threshold: float | None,
+    sparsity_threshold: float,
+) -> list[DiagnosticRule]:
+    rules: list[DiagnosticRule] = [
+        DeadLayerRule(threshold=sparsity_threshold),
+        ExplodingVarianceRule(threshold=variance_threshold),
+        ExtremeSpikeRule(threshold=spike_threshold),
+    ]
+    if norm_threshold is not None:
+        rules.append(AbnormalNormRule(threshold=norm_threshold))
+    return rules
+
+
+def _report_result(
+    result: AnalysisResult,
+    filename: str,
+    console: Console,
+    *,
+    variance_threshold: float,
+    spike_threshold: float,
+    norm_threshold: float | None,
+    sparsity_threshold: float,
+) -> int:
+    thresholds: dict[str, float | str] = {
+        "--variance-threshold": variance_threshold,
+        "--spike-threshold": spike_threshold,
+        "--norm-threshold": (
+            norm_threshold if norm_threshold is not None else "off (experimental)"
+        ),
+        "--sparsity-threshold": sparsity_threshold,
+    }
+    RichReporter(console, thresholds=thresholds).render(result, filename)
+    return 0
+
+
 def _run_analyze_pytorch(
     checkpoint_path: Path,
     *,
@@ -193,7 +265,7 @@ def _run_analyze_pytorch(
     num_workers: int | None = None,
     variance_threshold: float = 10.0,
     spike_threshold: float = 100.0,
-    norm_threshold: float = 5.0,
+    norm_threshold: float | None = None,
     sparsity_threshold: float = 0.9999,
 ) -> int:
     validator = PyTorchCheckpointValidator(checkpoint_path)
@@ -204,29 +276,33 @@ def _run_analyze_pytorch(
         return 2
 
     if not health.loadable or health.is_empty:
-        _render_health(console, health)
-        console.print("Analysis aborted: checkpoint not loadable or empty.")
-        return 1
+        return _abort_unusable_health(console, health)
 
     analyzer = Analyzer(
         source=PyTorchWeightSource(checkpoint_path),
         validator=StaticCheckpointValidator(health),
         stats_engine=BasicStatsEngine(),
         aggregator=StreamingGlobalAggregator(),
-        rules=[
-            DeadLayerRule(threshold=sparsity_threshold),
-            ExplodingVarianceRule(threshold=variance_threshold),
-            ExtremeSpikeRule(threshold=spike_threshold),
-            AbnormalNormRule(threshold=norm_threshold),
-        ],
+        rules=_build_rules(
+            variance_threshold=variance_threshold,
+            spike_threshold=spike_threshold,
+            norm_threshold=norm_threshold,
+            sparsity_threshold=sparsity_threshold,
+        ),
         classifier=PyTorchParameterClassifier(),
         num_workers=num_workers,
     )
     result = analyzer.analyze()
 
-    reporter = RichReporter(console)
-    reporter.render(result, checkpoint_path.name)
-    return 0
+    return _report_result(
+        result,
+        checkpoint_path.name,
+        console,
+        variance_threshold=variance_threshold,
+        spike_threshold=spike_threshold,
+        norm_threshold=norm_threshold,
+        sparsity_threshold=sparsity_threshold,
+    )
 
 
 def _run_analyze_dcp(
@@ -237,7 +313,7 @@ def _run_analyze_dcp(
     num_workers: int | None = None,
     variance_threshold: float = 10.0,
     spike_threshold: float = 100.0,
-    norm_threshold: float = 5.0,
+    norm_threshold: float | None = None,
     sparsity_threshold: float = 0.9999,
 ) -> int:
     from weightlens.sources.dcp import DCPWeightSource
@@ -256,9 +332,7 @@ def _run_analyze_dcp(
         return 2
 
     if not health.loadable or health.is_empty:
-        _render_health(console, health)
-        console.print("Analysis aborted: checkpoint not loadable or empty.")
-        return 1
+        return _abort_unusable_health(console, health)
 
     with warnings.catch_warnings():
         warnings.simplefilter("ignore")
@@ -267,20 +341,26 @@ def _run_analyze_dcp(
             validator=StaticCheckpointValidator(health),
             stats_engine=BasicStatsEngine(),
             aggregator=StreamingGlobalAggregator(),
-            rules=[
-                DeadLayerRule(threshold=sparsity_threshold),
-                ExplodingVarianceRule(threshold=variance_threshold),
-                ExtremeSpikeRule(threshold=spike_threshold),
-                AbnormalNormRule(threshold=norm_threshold),
-            ],
+            rules=_build_rules(
+                variance_threshold=variance_threshold,
+                spike_threshold=spike_threshold,
+                norm_threshold=norm_threshold,
+                sparsity_threshold=sparsity_threshold,
+            ),
             classifier=DCPParameterClassifier(include_optimizer=include_optimizer),
             num_workers=num_workers,
         )
         result = analyzer.analyze()
 
-    reporter = RichReporter(console)
-    reporter.render(result, checkpoint_path.name)
-    return 0
+    return _report_result(
+        result,
+        checkpoint_path.name,
+        console,
+        variance_threshold=variance_threshold,
+        spike_threshold=spike_threshold,
+        norm_threshold=norm_threshold,
+        sparsity_threshold=sparsity_threshold,
+    )
 
 
 def _run_analyze_safetensors(
@@ -291,7 +371,7 @@ def _run_analyze_safetensors(
     storage_options: dict[str, object] | None = None,
     variance_threshold: float = 10.0,
     spike_threshold: float = 100.0,
-    norm_threshold: float = 5.0,
+    norm_threshold: float | None = None,
     sparsity_threshold: float = 0.9999,
 ) -> int:
     validator = SafetensorsCheckpointValidator(uri, storage_options)
@@ -302,9 +382,7 @@ def _run_analyze_safetensors(
         return 2
 
     if not health.loadable or health.is_empty:
-        _render_health(console, health)
-        console.print("Analysis aborted: checkpoint not loadable or empty.")
-        return 1
+        return _abort_unusable_health(console, health)
 
     analyzer = Analyzer(
         source=SafetensorsWeightSource(
@@ -313,18 +391,25 @@ def _run_analyze_safetensors(
         validator=StaticCheckpointValidator(health),
         stats_engine=BasicStatsEngine(),
         aggregator=StreamingGlobalAggregator(),
-        rules=[
-            DeadLayerRule(threshold=sparsity_threshold),
-            ExplodingVarianceRule(threshold=variance_threshold),
-            ExtremeSpikeRule(threshold=spike_threshold),
-            AbnormalNormRule(threshold=norm_threshold),
-        ],
+        rules=_build_rules(
+            variance_threshold=variance_threshold,
+            spike_threshold=spike_threshold,
+            norm_threshold=norm_threshold,
+            sparsity_threshold=sparsity_threshold,
+        ),
         classifier=PyTorchParameterClassifier(),
         num_workers=num_workers,
     )
     result = analyzer.analyze()
-    RichReporter(console).render(result, uri.rsplit("/", 1)[-1])
-    return 0
+    return _report_result(
+        result,
+        uri.rsplit("/", 1)[-1],
+        console,
+        variance_threshold=variance_threshold,
+        spike_threshold=spike_threshold,
+        norm_threshold=norm_threshold,
+        sparsity_threshold=sparsity_threshold,
+    )
 
 
 def _run_analyze(
@@ -336,7 +421,7 @@ def _run_analyze(
     anon: bool = False,
     variance_threshold: float = 10.0,
     spike_threshold: float = 100.0,
-    norm_threshold: float = 5.0,
+    norm_threshold: float | None = None,
     sparsity_threshold: float = 0.9999,
     console: Console | None,
 ) -> int:
